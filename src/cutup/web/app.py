@@ -21,7 +21,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .. import ffmpeg as ffmpeg_mod, filters as filters_mod, render as render_mod
+from .. import (
+    ffmpeg as ffmpeg_mod,
+    filters as filters_mod,
+    presets as presets_mod,
+    render as render_mod,
+)
 from ..errors import CutupError
 from ..library import Library
 from ..paths import resolve_film_path
@@ -36,6 +41,12 @@ class PlayPatch(BaseModel):
     t_start: Optional[float] = None
     t_end: Optional[float] = None
     tags: Optional[dict[str, str]] = None
+
+
+class PresetBody(BaseModel):
+    name: str
+    filter: dict = {}
+    output: dict = {}
 
 
 class ExportRequest(BaseModel):
@@ -189,6 +200,26 @@ def create_app(library_root: Path) -> FastAPI:
             "JOIN films ON films.id = plays.film_id WHERE plays.id = ?", (play_id,)
         ).fetchone()
         return _serialize_play(lib.conn, updated)
+
+    # -- presets -----------------------------------------------------------
+
+    @app.get("/api/presets")
+    def presets(lib: Library = Depends(get_library)):
+        return presets_mod.list_presets(lib.conn)
+
+    @app.post("/api/presets")
+    def save_preset(body: PresetBody, lib: Library = Depends(get_library)):
+        presets_mod.save_preset(lib.conn, body.name, body.filter, body.output)
+        lib.conn.commit()
+        return presets_mod.get_preset(lib.conn, body.name)
+
+    @app.delete("/api/presets/{name}")
+    def delete_preset(name: str, lib: Library = Depends(get_library)):
+        removed = presets_mod.delete_preset(lib.conn, name)
+        lib.conn.commit()
+        if not removed:
+            raise HTTPException(status_code=404, detail="No such preset.")
+        return {"deleted": name}
 
     # -- video stream (Range-capable, for the scrubber) --------------------
 

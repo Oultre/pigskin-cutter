@@ -97,6 +97,23 @@ def test_export_dry_run_skips_untimed(client, tmp_path):
     assert not (tmp_path / "cuts").exists()
 
 
+def test_presets_crud(client):
+    assert client.get("/api/presets").json() == []
+    body = {"name": "3rd & long", "filter": {"where": ["down=3", "distance>=6"], "confirmed_only": True}}
+    saved = client.post("/api/presets", json=body).json()
+    assert saved["name"] == "3rd & long"
+    assert saved["filter"]["where"] == ["down=3", "distance>=6"]
+
+    # upsert by name (no duplicate)
+    client.post("/api/presets", json={"name": "3rd & long", "filter": {"where": ["down=3"]}})
+    listed = client.get("/api/presets").json()
+    assert len(listed) == 1 and listed[0]["filter"]["where"] == ["down=3"]
+
+    assert client.delete("/api/presets/3rd & long").status_code == 200
+    assert client.get("/api/presets").json() == []
+    assert client.delete("/api/presets/nope").status_code == 404
+
+
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")
 def test_stream_missing_film_is_404(client):
     r = client.get("/api/film/1/stream")

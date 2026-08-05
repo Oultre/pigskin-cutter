@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl,
+  getPresets, savePreset, deletePreset,
 } from './api.js'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
+const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
 
 function fmt(t) {
   if (t === null || t === undefined) return '—'
@@ -15,26 +17,83 @@ function fmt(t) {
   return `${p(h)}:${p(m)}:${sec.toFixed(1).padStart(4, '0')}`
 }
 
+// -- filter <-> preset conversions (canonical filter shape shared with the CLI)
+
 function predToWhere(p) {
   if (p.op === 'exists') return `${p.key} exists`
   return `${p.key}${p.op}${p.value}`
 }
+function whereToPred(w) {
+  const ex = w.match(/^(.+?)\s+exists\s*$/i)
+  if (ex) return { key: ex[1].trim(), op: 'exists', value: '' }
+  const m = w.match(/^(.+?)(>=|<=|!=|=|>|<)(.+)$/)
+  if (m) return { key: m[1].trim(), op: m[2], value: m[3].trim() }
+  return { key: w.trim(), op: '=', value: '' }
+}
+function formToFilter(form) {
+  return {
+    where: form.preds.filter((p) => p.key && (p.op === 'exists' || p.value !== '')).map(predToWhere),
+    film: form.film ? Number(form.film) : null,
+    source: form.source || null,
+    min_confidence: form.minConf !== '' ? Number(form.minConf) : null,
+    confirmed_only: form.confirmedOnly,
+  }
+}
+function filterToForm(f) {
+  return {
+    preds: (f.where || []).map(whereToPred),
+    film: f.film != null ? String(f.film) : '',
+    source: f.source || '',
+    minConf: f.min_confidence != null ? String(f.min_confidence) : '',
+    confirmedOnly: !!f.confirmed_only,
+  }
+}
+function formToQuery(form) {
+  const f = formToFilter(form)
+  return {
+    where: f.where,
+    film: f.film || undefined,
+    source: f.source || undefined,
+    minConfidence: f.min_confidence,
+    confirmedOnly: f.confirmed_only,
+  }
+}
 
-// -- Filter builder ---------------------------------------------------------
+// -- Presets ----------------------------------------------------------------
 
-function FilterBuilder({ films, tagKeys, onApply }) {
-  const [preds, setPreds] = useState([])
-  const [film, setFilm] = useState('')
-  const [source, setSource] = useState('')
-  const [minConf, setMinConf] = useState('')
-  const [confirmedOnly, setConfirmedOnly] = useState(false)
+function PresetBar({ presets, onLoad, onSave, onDelete }) {
+  const [name, setName] = useState('')
+  const [sel, setSel] = useState('')
+  return (
+    <div className="panel presets">
+      <h2>Presets</h2>
+      <div className="row">
+        <select value={sel} onChange={(e) => { setSel(e.target.value); if (e.target.value) onLoad(e.target.value) }}>
+          <option value="">load preset…</option>
+          {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+        </select>
+        <button className="x" disabled={!sel} onClick={() => { onDelete(sel); setSel('') }}>delete</button>
+      </div>
+      <div className="row">
+        <input placeholder="save current filter as…" value={name} onChange={(e) => setName(e.target.value)} />
+        <button disabled={!name.trim()} onClick={() => { onSave(name.trim()); setName('') }}>Save</button>
+      </div>
+    </div>
+  )
+}
+
+// -- Filter builder (controlled by App-owned form state) --------------------
+
+function FilterBuilder({ form, setForm, tagKeys, films, onApply }) {
   const [valueOptions, setValueOptions] = useState({})
+  const preds = form.preds
 
   const addPred = () =>
-    setPreds((p) => [...p, { key: tagKeys[0] || '', op: '=', value: '' }])
+    setForm((f) => ({ ...f, preds: [...f.preds, { key: tagKeys[0] || '', op: '=', value: '' }] }))
   const update = (i, patch) =>
-    setPreds((p) => p.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  const remove = (i) => setPreds((p) => p.filter((_, j) => j !== i))
+    setForm((f) => ({ ...f, preds: f.preds.map((x, j) => (j === i ? { ...x, ...patch } : x)) }))
+  const remove = (i) =>
+    setForm((f) => ({ ...f, preds: f.preds.filter((_, j) => j !== i) }))
 
   const loadValues = async (key) => {
     if (!key || valueOptions[key]) return
@@ -44,21 +103,13 @@ function FilterBuilder({ films, tagKeys, onApply }) {
     } catch { /* ignore */ }
   }
 
-  const apply = () =>
-    onApply({
-      where: preds.filter((p) => p.key && (p.op === 'exists' || p.value !== '')).map(predToWhere),
-      film: film || undefined,
-      source: source || undefined,
-      minConfidence: minConf,
-      confirmedOnly,
-    })
-
   return (
     <div className="panel filter">
       <h2>Filter</h2>
       {preds.map((p, i) => (
         <div className="pred" key={i}>
           <select value={p.key} onChange={(e) => { update(i, { key: e.target.value }); loadValues(e.target.value) }}>
+            {!tagKeys.includes(p.key) && p.key ? <option value={p.key}>{p.key}</option> : null}
             {tagKeys.map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
           <select value={p.op} onChange={(e) => update(i, { op: e.target.value })}>
@@ -81,27 +132,27 @@ function FilterBuilder({ films, tagKeys, onApply }) {
 
       <div className="meta">
         <label>Film
-          <select value={film} onChange={(e) => setFilm(e.target.value)}>
+          <select value={form.film} onChange={(e) => setForm((f) => ({ ...f, film: e.target.value }))}>
             <option value="">any</option>
             {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
           </select>
         </label>
         <label>Source
-          <select value={source} onChange={(e) => setSource(e.target.value)}>
+          <select value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.target.value }))}>
             <option value="">any</option>
             {['hudl', 'tagged', 'detected', 'ocr'].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <label>Min conf
-          <input type="number" step="0.1" min="0" max="1" value={minConf}
-            onChange={(e) => setMinConf(e.target.value)} style={{ width: '4em' }} />
+          <input type="number" step="0.1" min="0" max="1" value={form.minConf}
+            onChange={(e) => setForm((f) => ({ ...f, minConf: e.target.value }))} style={{ width: '4em' }} />
         </label>
         <label className="chk">
-          <input type="checkbox" checked={confirmedOnly}
-            onChange={(e) => setConfirmedOnly(e.target.checked)} /> confirmed only
+          <input type="checkbox" checked={form.confirmedOnly}
+            onChange={(e) => setForm((f) => ({ ...f, confirmedOnly: e.target.checked }))} /> confirmed only
         </label>
       </div>
-      <button className="primary" onClick={apply}>Apply</button>
+      <button className="primary" onClick={onApply}>Apply</button>
     </div>
   )
 }
@@ -245,28 +296,47 @@ function ExportPanel({ filter, count }) {
 export default function App() {
   const [films, setFilms] = useState([])
   const [tagKeys, setTagKeys] = useState([])
+  const [form, setForm] = useState(emptyForm)
   const [filter, setFilter] = useState({ where: [] })
   const [plays, setPlays] = useState([])
   const [selected, setSelected] = useState(null)
+  const [presets, setPresets] = useState([])
   const [error, setError] = useState('')
+
+  const refreshPresets = () => getPresets().then(setPresets).catch(() => {})
 
   useEffect(() => {
     getFilms().then(setFilms).catch((e) => setError(e.message))
     getTagKeys().then(setTagKeys).catch(() => {})
-    // Load all plays on open so the grid isn't blank before the first Apply.
     getPlays({ where: [] }).then((res) => setPlays(res.plays)).catch(() => {})
+    refreshPresets()
   }, [])
 
-  const runFilter = async (f) => {
-    setFilter(f); setError('')
+  const applyForm = async (f) => {
+    const q = formToQuery(f); setFilter(q); setError('')
     try {
-      const res = await getPlays(f)
+      const res = await getPlays(q)
       setPlays(res.plays)
       setSelected(null)
     } catch (e) { setError(e.message) }
   }
 
-  // when a play is nudged/edited, refresh it in the grid and preview
+  const loadPreset = async (name) => {
+    const p = presets.find((x) => x.name === name)
+    if (!p) return
+    const nf = filterToForm(p.filter)
+    setForm(nf)
+    await applyForm(nf)
+  }
+  const savePresetNow = async (name) => {
+    try { await savePreset({ name, filter: formToFilter(form) }); await refreshPresets() }
+    catch (e) { setError(e.message) }
+  }
+  const deletePresetNow = async (name) => {
+    try { await deletePreset(name); await refreshPresets() }
+    catch (e) { setError(e.message) }
+  }
+
   const onPlayChange = (updated) => {
     setPlays((ps) => ps.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
     setSelected((s) => (s && s.id === updated.id ? { ...s, ...updated } : s))
@@ -281,7 +351,9 @@ export default function App() {
       {error && <div className="error banner">{error}</div>}
       <div className="cols">
         <aside>
-          <FilterBuilder films={films} tagKeys={tagKeys} onApply={runFilter} />
+          <PresetBar presets={presets} onLoad={loadPreset} onSave={savePresetNow} onDelete={deletePresetNow} />
+          <FilterBuilder form={form} setForm={setForm} tagKeys={tagKeys} films={films}
+            onApply={() => applyForm(form)} />
           <ExportPanel filter={filter} count={plays.length} />
         </aside>
         <main>

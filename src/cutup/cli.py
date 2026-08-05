@@ -22,7 +22,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, db, ffmpeg as ffmpeg_mod, filters as filters_mod
+from . import __version__, db, ffmpeg as ffmpeg_mod, filters as filters_mod, presets as presets_mod
 from .config import Config
 from .errors import CutupError
 from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, probe as probe_mod
@@ -48,11 +48,13 @@ import_app = typer.Typer(no_args_is_help=True, help="Import Hudl breakdowns via 
 profile_app = typer.Typer(no_args_is_help=True, help="Save and inspect column-mapping profiles.")
 import_app.add_typer(profile_app, name="profile")
 clips_app = typer.Typer(no_args_is_help=True, help="Import pre-cut Hudl clip folders.")
+preset_app = typer.Typer(no_args_is_help=True, help="Save and reuse filter presets.")
 app.add_typer(film_app, name="film")
 app.add_typer(play_app, name="play")
 app.add_typer(config_app, name="config")
 app.add_typer(import_app, name="import")
 app.add_typer(clips_app, name="clips")
+app.add_typer(preset_app, name="preset")
 
 # Shared option definition so every command resolves the library the same way.
 LibraryOpt = typer.Option(
@@ -464,6 +466,26 @@ def _selection(lib: Library, where, source, min_confidence, confirmed_only, film
     return lib.conn.execute(query, params).fetchall()
 
 
+def _selection_with_preset(lib: Library, preset, where, source, min_confidence,
+                           confirmed_only, film):
+    """Run a selection, first layering in a saved preset's filter if named.
+
+    Explicit CLI flags win; extra ``--where`` predicates are appended to the
+    preset's.
+    """
+    where = list(where or [])
+    if preset:
+        pf = presets_mod.get_preset(lib.conn, preset).get("filter", {})
+        where = list(pf.get("where", [])) + where
+        source = source or pf.get("source")
+        if min_confidence is None:
+            min_confidence = pf.get("min_confidence")
+        confirmed_only = confirmed_only or bool(pf.get("confirmed_only"))
+        if film is None:
+            film = pf.get("film")
+    return _selection(lib, where, source, min_confidence, confirmed_only, film)
+
+
 @app.command()
 def query(
     where: Optional[List[str]] = typer.Option(None, "--where", "-w", help="key OP value (repeatable)."),
@@ -471,11 +493,12 @@ def query(
     min_confidence: Optional[float] = typer.Option(None, "--min-confidence"),
     confirmed_only: bool = typer.Option(False, "--confirmed-only", help="Human-confirmed plays only."),
     film: Optional[int] = typer.Option(None, "--film"),
+    preset: Optional[str] = typer.Option(None, "--preset", help="Start from a saved preset's filter."),
     library: Optional[Path] = LibraryOpt,
 ):
     """Show plays matching a filter, without exporting."""
     lib = Library.open(library)
-    rows = _selection(lib, where, source, min_confidence, confirmed_only, film)
+    rows = _selection_with_preset(lib, preset, where, source, min_confidence, confirmed_only, film)
     console.print(f"[bold]{len(rows)}[/bold] plays matched.")
     if rows:
         table = Table(show_header=True, header_style="bold")
@@ -496,12 +519,13 @@ def query(
 
 @app.command()
 def export(
-    out: Path = typer.Option(..., "--out", help="Output directory for clips."),
+    out: Optional[Path] = typer.Option(None, "--out", help="Output directory for clips (or from --preset)."),
     where: Optional[List[str]] = typer.Option(None, "--where", "-w", help="key OP value (repeatable)."),
     source: Optional[str] = typer.Option(None, "--source"),
     min_confidence: Optional[float] = typer.Option(None, "--min-confidence"),
     confirmed_only: bool = typer.Option(False, "--confirmed-only"),
     film: Optional[int] = typer.Option(None, "--film"),
+    preset: Optional[str] = typer.Option(None, "--preset", help="Start from a saved preset (filter + output)."),
     pre: Optional[float] = typer.Option(None, "--pre", help="Pre-roll seconds (default: config)."),
     post: Optional[float] = typer.Option(None, "--post", help="Post-roll seconds (default: config)."),
     accurate: bool = typer.Option(False, "--accurate", help="Frame-exact re-encode instead of stream copy."),
@@ -514,7 +538,24 @@ def export(
     """Cut individual clips for every play matching the filter."""
     lib = Library.open(library)
     try:
-        matched = _selection(lib, where, source, min_confidence, confirmed_only, film)
+        # A preset can supply both the selection and output defaults.
+        output_defaults: dict = {}
+        if preset:
+            output_defaults = presets_mod.get_preset(lib.conn, preset).get("output", {})
+        if out is None and output_defaults.get("out"):
+            out = Path(output_defaults["out"])
+        if out is None:
+            raise CutupError("No output directory. Pass --out or use a --preset that sets one.")
+        if pre is None and output_defaults.get("pre") is not None:
+            pre = output_defaults["pre"]
+        if post is None and output_defaults.get("post") is not None:
+            post = output_defaults["post"]
+        if not accurate:
+            accurate = bool(output_defaults.get("accurate", False))
+        if encoder is None:
+            encoder = output_defaults.get("encoder")
+
+        matched = _selection_with_preset(lib, preset, where, source, min_confidence, confirmed_only, film)
         if not matched:
             console.print("No plays matched - nothing to export.")
             return
@@ -856,6 +897,79 @@ def _register_clip(lib: Library, clip_file: Path, row: dict, dest_dir: Path,
     db.insert_play(lib.conn, film_id, play_no, 0.0, duration if duration is not None else 0.0,
                    source, confidence, row.get("tags", {}))
     return 1
+
+
+# -- presets ---------------------------------------------------------------
+
+
+@preset_app.command("save")
+def preset_save(
+    name: str = typer.Argument(..., help="Preset name (overwrites if it exists)."),
+    where: Optional[List[str]] = typer.Option(None, "--where", "-w", help="key OP value (repeatable)."),
+    source: Optional[str] = typer.Option(None, "--source"),
+    min_confidence: Optional[float] = typer.Option(None, "--min-confidence"),
+    confirmed_only: bool = typer.Option(False, "--confirmed-only"),
+    film: Optional[int] = typer.Option(None, "--film"),
+    out: Optional[str] = typer.Option(None, "--out", help="Default output folder for exports."),
+    pre: Optional[float] = typer.Option(None, "--pre"),
+    post: Optional[float] = typer.Option(None, "--post"),
+    accurate: bool = typer.Option(False, "--accurate"),
+    encoder: Optional[str] = typer.Option(None, "--encoder"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Save a filter (and optional export defaults) as a reusable preset."""
+    filter_dict = {
+        "where": list(where or []),
+        "film": film,
+        "source": source,
+        "min_confidence": min_confidence,
+        "confirmed_only": confirmed_only,
+    }
+    output = {k: v for k, v in {
+        "out": out, "pre": pre, "post": post,
+        "accurate": accurate or None, "encoder": encoder,
+    }.items() if v is not None}
+    lib = Library.open(library)
+    try:
+        presets_mod.save_preset(lib.conn, name, filter_dict, output)
+        lib.conn.commit()
+        console.print(f"[green]saved preset[/green] {name}")
+    finally:
+        lib.close()
+
+
+@preset_app.command("ls")
+def preset_ls(library: Optional[Path] = LibraryOpt):
+    """List saved presets."""
+    lib = Library.open(library)
+    rows = presets_mod.list_presets(lib.conn)
+    if not rows:
+        console.print("No presets. Save one with `cutup preset save`.")
+    for p in rows:
+        where = ", ".join(p["filter"].get("where", [])) or "(no conditions)"
+        console.print(f"[bold]{p['name']}[/bold]: {where}")
+    lib.close()
+
+
+@preset_app.command("show")
+def preset_show(name: str = typer.Argument(...), library: Optional[Path] = LibraryOpt):
+    """Print a preset's filter and output settings."""
+    lib = Library.open(library)
+    p = presets_mod.get_preset(lib.conn, name)
+    console.print(f"[bold]{p['name']}[/bold]")
+    console.print(f"  filter: {json.dumps(p['filter'])}")
+    console.print(f"  output: {json.dumps(p['output'])}")
+    lib.close()
+
+
+@preset_app.command("rm")
+def preset_rm(name: str = typer.Argument(...), library: Optional[Path] = LibraryOpt):
+    """Delete a preset."""
+    lib = Library.open(library)
+    removed = presets_mod.delete_preset(lib.conn, name)
+    lib.conn.commit()
+    console.print(f"[green]removed[/green] {name}" if removed else f"No preset named {name!r}.")
+    lib.close()
 
 
 # -- helpers ---------------------------------------------------------------

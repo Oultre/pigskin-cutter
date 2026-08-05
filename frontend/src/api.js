@@ -41,3 +41,13 @@ export const postExport = (body) =>
   }).then(j)
 
 export const streamUrl = (filmId) => '/api/film/' + filmId + '/stream'
+
+export const getPresets = () => fetch('/api/presets').then(j)
+export const savePreset = (body) =>
+  fetch('/api/presets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+export const deletePreset = (name) =>
+  fetch('/api/presets/' + encodeURIComponent(name), { method: 'DELETE' }).then(j)
