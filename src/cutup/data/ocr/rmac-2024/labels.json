@@ -1,0 +1,19 @@
+{
+  "note": "Confirmed ground-truth reads used to generate glyphs.npz (the 'generate templates from confirmed reads' step, PLAN 2C.1a). Source: tests/fixtures/video/CSM v CSC 24.mp4 (gitignored). Regenerate: cutup ocr calibrate --video <that> --package rmac-2024.",
+  "frames": [
+    { "t": 1200, "game_clock": "14:44", "play_clock": "38", "quarter": "1" },
+    { "t": 1700, "game_clock": "9:32",  "play_clock": "31", "quarter": "1" },
+    { "t": 2200, "game_clock": "6:47",  "play_clock": "25", "quarter": "1" },
+    { "t": 2700, "game_clock": "2:03",  "play_clock": "25", "quarter": "1" },
+    { "t": 3200, "game_clock": "13:47", "play_clock": "31", "quarter": "2" },
+    { "t": 3700, "game_clock": "7:38",  "play_clock": "12", "quarter": "2" },
+    { "t": 4200, "game_clock": "4:53",  "play_clock": "25", "quarter": "2" },
+    { "t": 4700, "game_clock": "1:54",  "play_clock": "25", "quarter": "2" },
+    { "t": 5200, "game_clock": "0:37",  "play_clock": "25", "quarter": "2" },
+    { "t": 6700, "game_clock": "15:00", "play_clock": "13", "quarter": "3" },
+    { "t": 7200, "game_clock": "10:26", "play_clock": "25", "quarter": "3" },
+    { "t": 7700, "game_clock": "5:50",  "play_clock": "40", "quarter": "3" },
+    { "t": 8200, "game_clock": "1:21",  "play_clock": "20", "quarter": "3" },
+    { "t": 8700, "game_clock": "14:28", "play_clock": "25", "quarter": "4" }
+  ]
+}

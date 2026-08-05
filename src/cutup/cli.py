@@ -1361,6 +1361,73 @@ def align(
 # -- ocr templates ---------------------------------------------------------
 
 
+@ocr_app.command("scan")
+def ocr_scan(
+    film: int = typer.Option(..., "--film", help="Film id (a registered broadcast video)."),
+    package: str = typer.Option("rmac-2024", "--package", help="Bundled OCR package (template + glyphs)."),
+    start: float = typer.Option(0.0, "--start", help="Start video-second."),
+    end: Optional[float] = typer.Option(None, "--end", help="End video-second."),
+    fps: float = typer.Option(1.0, "--fps"),
+    out: Path = typer.Option(..., "--out", help="Clock-map JSON to write (feeds `cutup align`)."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Read a film's score bug into a clock map (OCR → video↔game-clock map)."""
+    from .ocr.scan import load_bundled_glyphs, load_bundled_template, scan_clockmap
+    lib = Library.open(library)
+    try:
+        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (film,)).fetchone()
+        if row is None:
+            raise CutupError(f"No film with id {film}.")
+        video = resolve_film_path(lib.root, row["path"])
+        if not video.exists():
+            raise CutupError(f"Film file not found: {video}")
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
+        template = load_bundled_template(package)
+        glyphs = load_bundled_glyphs(package)
+
+        console.print(f"Scanning film {film} with package {package} "
+                      f"({'whole film' if end is None else f'{start:.0f}-{end:.0f}s'}) ...")
+        cm, playclock, stats = scan_clockmap(
+            ffmpeg, ffprobe, video, template, glyphs, start=start, end=end, fps=fps,
+            progress=lambda r, k: console.print(f"  {r} frames, {k} clock samples", end="\r"),
+        )
+        Path(out).write_text(json.dumps(cm.to_json()), encoding="utf-8")
+        pc_path = Path(out).with_suffix(".playclock.json")
+        pc_path.write_text(json.dumps(playclock), encoding="utf-8")
+        console.print(f"\n[green]scanned[/green] {stats['frames_read']} frames, "
+                      f"{stats['clock_samples']} clock samples, quarters {cm.quarters}.")
+        console.print(f"clock map -> {out}   play-clock series -> {pc_path}")
+    finally:
+        lib.close()
+
+
+@ocr_app.command("calibrate")
+def ocr_calibrate(
+    film: int = typer.Option(..., "--film", help="Film id to sample confirmed frames from."),
+    package: str = typer.Option(..., "--package", help="Bundled package whose labels.json to use."),
+    out: Path = typer.Option(..., "--out", help="Glyph library .npz to write."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Regenerate a package's glyph library from its confirmed frames + a film."""
+    from importlib.resources import files
+    from .ocr.scan import calibrate, load_bundled_template
+    lib = Library.open(library)
+    try:
+        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (film,)).fetchone()
+        if row is None:
+            raise CutupError(f"No film with id {film}.")
+        video = resolve_film_path(lib.root, row["path"])
+        labels = json.loads(files("cutup.data").joinpath("ocr", package, "labels.json").read_text(encoding="utf-8"))
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        glyphs = calibrate(ffmpeg, video, load_bundled_template(package), labels)
+        glyphs.save_npz(out)
+        console.print(f"[green]calibrated[/green] {sum(len(v) for v in glyphs.templates.values())} "
+                      f"glyphs -> {out}")
+    finally:
+        lib.close()
+
+
 @ocr_app.command("ls")
 def ocr_ls(library: Optional[Path] = LibraryOpt):
     """List saved score-bug region templates."""

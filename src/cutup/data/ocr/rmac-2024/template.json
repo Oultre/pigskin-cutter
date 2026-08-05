@@ -1,0 +1,12 @@
+{
+  "name": "rmac-2024",
+  "broadcaster": "RMAC Network",
+  "season": "2024",
+  "note": "Top-center score bar. Region boxes are fractions of the full frame; verified against native 1080p (PLAN 2C.1 rev-9).",
+  "regions": [
+    { "name": "quarter",       "x": 0.497, "y": 0.024, "w": 0.045, "h": 0.034, "polarity": "light", "whitelist": "0123456789" },
+    { "name": "game_clock",    "x": 0.545, "y": 0.024, "w": 0.066, "h": 0.034, "polarity": "light", "whitelist": "0123456789:" },
+    { "name": "down_distance", "x": 0.620, "y": 0.024, "w": 0.085, "h": 0.034, "polarity": "light", "whitelist": null },
+    { "name": "play_clock",    "x": 0.700, "y": 0.024, "w": 0.026, "h": 0.034, "polarity": "light", "whitelist": "0123456789" }
+  ]
+}

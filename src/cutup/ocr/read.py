@@ -12,7 +12,9 @@ stay flagged in the index (CLAUDE.md: nothing silently trusted).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -94,6 +96,25 @@ class GlyphSet:
 
     def add(self, label: str, glyph: np.ndarray) -> None:
         self.templates.setdefault(label, []).append(glyph)
+
+    def save_npz(self, path) -> None:
+        """Persist the glyph library (a bundle-able artifact per package)."""
+        arrays, meta = {}, {}
+        for label, refs in self.templates.items():
+            for ref in refs:
+                key = f"g{len(arrays)}"
+                arrays[key] = ref
+                meta[key] = label
+        np.savez_compressed(str(path), _meta=json.dumps(meta), **arrays)
+
+    @classmethod
+    def load_npz(cls, path) -> "GlyphSet":
+        data = np.load(path, allow_pickle=False)   # path or file-like
+        meta = json.loads(str(data["_meta"]))
+        gs = cls()
+        for key, label in meta.items():
+            gs.add(label, data[key])
+        return gs
 
     def classify(self, glyph: np.ndarray, whitelist: str | None = None) -> tuple[str, float]:
         g = glyph.astype(np.float32)

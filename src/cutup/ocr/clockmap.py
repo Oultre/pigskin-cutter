@@ -75,29 +75,28 @@ class ClockMap:
         return sorted(self._q)
 
     def video_time_for(self, quarter: int, clock_sec: int) -> float | None:
-        """Interpolate the video second at which ``quarter`` showed ``clock_sec``.
+        """Video second at which ``quarter`` showed ``clock_sec``.
 
-        Returns None if the quarter is unknown or the clock is outside its
-        sampled range (no extrapolation — an out-of-range lookup is a miss the
-        caller should flag, not guess).
+        The game clock *holds* at a value while play is stopped, then starts
+        running at the snap — so for a clock value that appears (a plateau) we
+        return the **end** of the plateau (the snap), not its start. A value the
+        clock ran through without stopping is interpolated. Returns None if the
+        quarter is unknown or the clock is outside its sampled range (no
+        extrapolation — an out-of-range lookup is a flagged miss, not a guess).
         """
         pts = self._q.get(int(quarter))
-        if not pts or len(pts) < 1:
+        if not pts:
             return None
         clock_sec = int(clock_sec)
-        # clock is non-increasing as video increases; find a bracketing pair
+
+        exact = [v for v, c in pts if c == clock_sec]
+        if exact:
+            return max(exact)                    # end of the plateau = the snap
+
         for (v0, c0), (v1, c1) in zip(pts, pts[1:]):
-            hi, lo = c0, c1                      # hi >= lo (clock counts down)
-            if lo <= clock_sec <= hi:
-                if c0 == c1:
-                    return v0
+            if c0 > clock_sec > c1:              # clock ran through the value
                 frac = (c0 - clock_sec) / (c0 - c1)
                 return v0 + frac * (v1 - v0)
-        # exact endpoints / single point
-        if pts[0][1] == clock_sec:
-            return pts[0][0]
-        if pts[-1][1] == clock_sec:
-            return pts[-1][0]
         return None
 
     def to_json(self) -> dict:
