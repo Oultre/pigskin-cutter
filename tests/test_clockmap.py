@@ -43,6 +43,17 @@ def test_drops_nonmonotonic_glitches():
     assert cm.video_time_for(1, 810) == pytest.approx(90)   # unaffected by glitch
 
 
+def test_short_garbage_run_does_not_poison_the_map():
+    # a pregame animation misreads as a short 0:09->0:00 countdown, THEN the real
+    # quarter (14:50 -> 0:00). The real run must win (longest non-increasing).
+    garbage = [ClockSample(v, 1, 9 - (v - 100)) for v in range(100, 110)]     # 10 pts
+    real = [ClockSample(v, 1, max(0, 890 - (v - 150))) for v in range(150, 1050)]  # 900 pts
+    cm = ClockMap.from_samples(garbage + real)
+    pts = cm._q[1]
+    assert len(pts) > 800                       # kept the real quarter, dropped garbage
+    assert cm.video_time_for(1, 884) == pytest.approx(156)   # 890-884=6 -> v 156
+
+
 def test_json_roundtrip():
     cm = _map()
     cm2 = ClockMap.from_json(cm.to_json())

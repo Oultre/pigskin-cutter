@@ -12,6 +12,7 @@ up) are dropped when the map is built.
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 from dataclasses import dataclass
@@ -40,6 +41,36 @@ class ClockSample:
     clock_sec: int
 
 
+def _longest_non_increasing(pts: list[tuple[float, int]]) -> list[tuple[float, int]]:
+    """Longest subsequence (in video order) whose clock is non-increasing.
+
+    Patience sorting on the negated clock, O(n log n), with predecessor tracking
+    so the actual (video, clock) points are reconstructed. Plateaus (equal clock)
+    are kept.
+    """
+    if not pts:
+        return []
+    neg = [-c for _, c in pts]
+    tails: list[int] = []        # tails[k] = smallest tail of a length-(k+1) run
+    tails_idx: list[int] = []
+    pred = [-1] * len(pts)
+    for i, x in enumerate(neg):
+        j = bisect.bisect_right(tails, x)
+        if j == len(tails):
+            tails.append(x)
+            tails_idx.append(i)
+        else:
+            tails[j] = x
+            tails_idx[j] = i
+        pred[i] = tails_idx[j - 1] if j > 0 else -1
+    k = tails_idx[-1]
+    seq = []
+    while k != -1:
+        seq.append(pts[k])
+        k = pred[k]
+    return list(reversed(seq))
+
+
 class ClockMap:
     """Per-quarter samples of (video_sec, clock_sec), monotonic by construction."""
 
@@ -60,14 +91,15 @@ class ClockMap:
             by_q.setdefault(int(q), []).append((float(v), int(c)))
         for q, pts in by_q.items():
             pts.sort(key=lambda p: p[0])          # by video time
-            kept: list[tuple[float, int]] = []
+            dedup: list[tuple[float, int]] = []
             for v, c in pts:
-                if kept and c > kept[-1][1]:      # clock went up -> glitch, drop
+                if dedup and v == dedup[-1][0]:   # one sample per video-second
                     continue
-                if kept and v == kept[-1][0]:     # duplicate video sec
-                    continue
-                kept.append((v, c))
-            cm._q[q] = kept
+                dedup.append((v, c))
+            # keep the longest run whose clock is non-increasing over video — this
+            # ignores short OCR-garbage runs (e.g. a pregame animation) regardless
+            # of where they sit, instead of letting an early one poison the map.
+            cm._q[q] = _longest_non_increasing(dedup)
         return cm
 
     @property
