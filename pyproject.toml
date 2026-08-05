@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gridiron-cutup"
+version = "0.1.0"
+description = "Local-only football film cut-up tool: index film, filter plays, export clips."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Matt" }]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+cutup = "cutup.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cutup"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
