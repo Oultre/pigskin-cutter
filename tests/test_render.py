@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from cutup.render import build_argv, manifest_rows, plan_clips
+from cutup.render import build_argv, execute, manifest_rows, plan_clips
 
 
-def _row(pid, no, ts, te, path="game.mp4", label="Game 1"):
+def _row(pid, no, ts, te, path="game.mp4", label="Game 1", source_type="broadcast"):
     return {"id": pid, "play_no": no, "t_start": ts, "t_end": te,
-            "film_path": path, "film_label": label}
+            "film_path": path, "film_label": label, "film_source_type": source_type}
 
 
 def _resolve(root, stored):
@@ -59,6 +59,26 @@ def test_template_uses_tags():
         output_template="{play_no:03d}_{formation}.mp4", resolve_film=_resolve,
     )
     assert clips[0].out_path.name == "007_trips.mp4"
+
+
+def test_precut_clip_plans_as_whole_file_copy(tmp_path):
+    src = tmp_path / "0007.mov"
+    src.write_bytes(b"video-bytes")
+    row = _row(1, 7, 0.0, 3.0, path="0007.mov", label="G1 #7", source_type="hudl_clip")
+    clips = plan_clips(
+        [row], {}, ffmpeg="ffmpeg", library_root=tmp_path, out_dir=tmp_path / "out",
+        pre_roll=3.0, post_roll=2.0, accurate=False, encoder="libx264",
+        output_template="{play_no:03d}.mp4", resolve_film=lambda r, s: tmp_path / s,
+    )
+    c = clips[0]
+    assert c.mode == "file"
+    assert c.argv == []
+    assert c.out_path.name == "007.mov"   # source extension preserved, no padding
+    assert c.t_in == 0.0
+
+    results = execute(clips)
+    assert results[0].ok
+    assert (tmp_path / "out" / "007.mov").read_bytes() == b"video-bytes"
 
 
 def test_manifest_rows_shape():

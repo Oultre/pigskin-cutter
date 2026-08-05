@@ -13,12 +13,21 @@ second code path that could drift from what the dry run showed.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .timecode import format_time, seconds_arg
+
+
+def _row_get(row, key, default=None):
+    """Read a column from a sqlite3.Row or dict, tolerating absence."""
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
 
 
 @dataclass
@@ -30,7 +39,7 @@ class ClipSpec:
     out_path: Path
     t_in: float
     t_out: float
-    mode: str          # "copy" or "encode"
+    mode: str          # "copy" (stream copy), "encode" (re-encode), "file" (copy whole clip)
     encoder: str | None
     argv: list[str]
     tags: dict[str, str] = field(default_factory=dict)
@@ -116,13 +125,20 @@ def plan_clips(
     used_names: dict[str, int] = {}
 
     for row in rows:
-        t_in = max(row["t_start"] - pre_roll, 0.0)
-        t_out = row["t_end"] + post_roll
         play_no = row["play_no"]
         film_label = row["film_label"] or Path(row["film_path"]).stem
         tags = tags_by_play.get(row["id"], {})
+        film_abs = resolve_film(library_root, row["film_path"])
+        is_precut = _row_get(row, "film_source_type") == "hudl_clip"
 
-        name = _render_filename(output_template, play_no, film_label, tags)
+        # Pre-cut clips are already cut: output is a whole-file copy, no padding
+        # and no ffmpeg (PLAN §2A). Keep the source file's extension.
+        if is_precut and os.path.splitext(output_template)[1] == ".mp4":
+            template = os.path.splitext(output_template)[0] + film_abs.suffix
+        else:
+            template = output_template
+        name = _render_filename(template, play_no, film_label, tags)
+
         # Disambiguate collisions (two plays -> same name) with a numeric suffix.
         if name in used_names:
             used_names[name] += 1
@@ -130,9 +146,19 @@ def plan_clips(
             name = f"{stem}_{used_names[name]}{ext}"
         else:
             used_names[name] = 1
-
-        film_abs = resolve_film(library_root, row["film_path"])
         out_path = out_dir / name
+
+        if is_precut:
+            t_out = row["t_end"] or 0.0
+            clips.append(ClipSpec(
+                play_id=row["id"], play_no=play_no, film_label=film_label,
+                film_abs=film_abs, out_path=out_path, t_in=0.0, t_out=t_out,
+                mode="file", encoder=None, argv=[], tags=tags,
+            ))
+            continue
+
+        t_in = max((row["t_start"] or 0.0) - pre_roll, 0.0)
+        t_out = (row["t_end"] or 0.0) + post_roll
         argv = build_argv(
             ffmpeg, film_abs, t_in, max(t_out - t_in, 0.0), out_path,
             accurate=accurate, encoder=encoder,
@@ -170,9 +196,17 @@ def execute(clips: list[ClipSpec], *, workers: int | None = None,
     workers = min(workers, 4)
 
     def _run(clip: ClipSpec) -> RenderResult:
-        proc = subprocess.run(clip.argv, capture_output=True, text=True, check=False)
-        ok = proc.returncode == 0 and clip.out_path.exists()
-        result = RenderResult(clip=clip, ok=ok, stderr=proc.stderr.strip())
+        if clip.mode == "file":
+            # Pre-cut clip: copy the whole source file, preserving it exactly.
+            try:
+                shutil.copy2(clip.film_abs, clip.out_path)
+                result = RenderResult(clip=clip, ok=clip.out_path.exists())
+            except OSError as exc:
+                result = RenderResult(clip=clip, ok=False, stderr=str(exc))
+        else:
+            proc = subprocess.run(clip.argv, capture_output=True, text=True, check=False)
+            ok = proc.returncode == 0 and clip.out_path.exists()
+            result = RenderResult(clip=clip, ok=ok, stderr=proc.stderr.strip())
         if progress is not None:
             progress(result)
         return result

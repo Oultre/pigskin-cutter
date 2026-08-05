@@ -143,7 +143,8 @@ def build_query(
 
     where = " AND ".join(clauses) if clauses else "1 = 1"
     query = (
-        "SELECT plays.*, films.path AS film_path, films.label AS film_label "
+        "SELECT plays.*, films.path AS film_path, films.label AS film_label, "
+        "films.source_type AS film_source_type "
         "FROM plays JOIN films ON films.id = plays.film_id "
         f"WHERE {where} "
         "ORDER BY plays.film_id, plays.play_no, plays.t_start"

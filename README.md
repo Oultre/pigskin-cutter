@@ -11,9 +11,11 @@ No accounts, no server, no sync. Everything runs locally against files on disk.
 
 ## Status
 
-**Phases 1–2 are built.** Phase 1: index a film, filter plays, export individual clips,
+**Phases 1–3 are built.** Phase 1: index a film, filter plays, export individual clips,
 with `--dry-run` on every write path. Phase 2: the Hudl breakdown importer with reusable
-column-mapping profiles. OCR, PBP ingest, and the web UI are later phases (`docs/PLAN.md` §6).
+column-mapping profiles. Phase 3: pre-cut Hudl clips end to end — match a folder of clips to
+breakdown rows, reconcile the drift, and export by whole-file copy. OCR, PBP ingest, and the
+web UI are later phases (`docs/PLAN.md` §6).
 
 ## Install (development)
 
@@ -55,6 +57,23 @@ cutup import profile save hudl-default --from breakdown.xlsx   # persist an edit
 A breakdown with no `PLAY #` column is numbered by row order; one with no start/end columns
 imports as an untimed chart (it filters and charts, and gets its cut times later from a clip
 map or a tag pass). Both cases are reported, never silent.
+
+### Pre-cut Hudl clips
+
+If you already have individual clip files (a Hudl playlist download), map them to a breakdown
+and register them — output is a whole-file copy, no re-cutting:
+
+```bash
+cutup clips import ./download --breakdown breakdown.xlsx --match number --dry-run
+cutup clips import ./download --breakdown breakdown.xlsx --match number
+cutup export --out ./cuts --where "off_form=TRIPS"
+```
+
+`--match index` pairs sorted files to rows positionally; `--match number` reads a play number
+from each filename (override the pattern with `--pattern`). Before writing anything it prints a
+**reconciliation**: clip files with no breakdown row, and breakdown rows with no clip (the
+penalties/no-plays the download skipped). Each clip becomes its own `hudl_clip` film with one
+whole-file play carrying the matched row's tags.
 
 A **library is a folder** containing `library.sqlite`, `config.json`, and your film; film
 paths are stored relative to it so the same library opens on macOS and Windows. Point at a

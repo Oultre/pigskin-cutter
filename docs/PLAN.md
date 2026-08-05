@@ -575,6 +575,11 @@ broadcast archive. Worth knowing that's where the money goes.
    `tests/fixtures/hudl/`, but it is a PlaylistData playlist with only a `PLAY #` column —
    see §2A rev-7 note. A full breakdown-grid export is still needed to verify the default
    profile's mapping of down/distance/formation/etc.)*
+2b. **Pre-cut clip filenames** — the Phase 3 clip↔row matcher defaults to reading the last
+   digit run in each filename (`--match number`) or positional order (`--match index`). No
+   real Hudl clip export has been seen yet, so the default filename pattern is a reasonable
+   guess; drop a handful of real pre-cut clips in `tests/fixtures/clips/` to confirm it.
+
 3. **~10 native-resolution frames** spanning all 3–4 seasons, ideally including one from
    each season opener — confirms whether the RMAC Network graphics package holds steady or
    needs multiple templates.

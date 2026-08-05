@@ -25,7 +25,7 @@ from rich.table import Table
 from . import __version__, db, ffmpeg as ffmpeg_mod, filters as filters_mod
 from .config import Config
 from .errors import CutupError
-from .ingest import hudl_csv as hudl_mod, probe as probe_mod
+from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, probe as probe_mod
 from .ingest.profiles import ImportProfile, suggest_profile
 from .library import Library
 from .models import PLAY_SOURCES, SOURCE_TYPES
@@ -47,10 +47,12 @@ config_app = typer.Typer(no_args_is_help=True, help="Read and set library config
 import_app = typer.Typer(no_args_is_help=True, help="Import Hudl breakdowns via mapping profiles.")
 profile_app = typer.Typer(no_args_is_help=True, help="Save and inspect column-mapping profiles.")
 import_app.add_typer(profile_app, name="profile")
+clips_app = typer.Typer(no_args_is_help=True, help="Import pre-cut Hudl clip folders.")
 app.add_typer(film_app, name="film")
 app.add_typer(play_app, name="play")
 app.add_typer(config_app, name="config")
 app.add_typer(import_app, name="import")
+app.add_typer(clips_app, name="clips")
 
 # Shared option definition so every command resolves the library the same way.
 LibraryOpt = typer.Option(
@@ -693,6 +695,129 @@ def profile_show(
     lib.close()
 
 
+# -- clips (pre-cut) -------------------------------------------------------
+
+
+def _print_reconciliation(rec) -> None:
+    console.print(f"[bold]Reconciliation[/bold] (match by {rec.strategy}): {rec.summary}")
+    if rec.unmatched_files:
+        console.print("[yellow]Clip files with no breakdown row:[/yellow]")
+        for f in rec.unmatched_files:
+            console.print(f"  {f.name}")
+    if rec.unmatched_rows:
+        console.print("[yellow]Breakdown rows with no clip file:[/yellow]")
+        for r in rec.unmatched_rows:
+            tags = ", ".join(f"{k}={v}" for k, v in r.get("tags", {}).items())
+            console.print(f"  play_no={r.get('play_no')} {tags}")
+
+
+@clips_app.command("import")
+def clips_import(
+    folder: Path = typer.Argument(..., help="Folder of pre-cut clip files."),
+    breakdown: Optional[Path] = typer.Option(None, "--breakdown", help="Breakdown .xlsx/.csv to tag the clips."),
+    match: str = typer.Option("index", "--match", help="Pairing strategy: index | number."),
+    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex for the play number in filenames (number strategy)."),
+    profile: Optional[str] = typer.Option(None, "--profile"),
+    header_row: int = typer.Option(1, "--header-row"),
+    label: Optional[str] = typer.Option(None, "--label", help="Film label prefix (default: folder name)."),
+    dest: str = typer.Option("clips", "--dest", help="Subfolder inside the library to copy clips into."),
+    source: str = typer.Option("hudl", "--source"),
+    confidence: float = typer.Option(1.0, "--confidence"),
+    keep_unmatched: bool = typer.Option(True, "--keep-unmatched/--drop-unmatched",
+                                        help="Import clip files with no row as untagged plays."),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Map a folder of pre-cut clips to breakdown rows and register them.
+
+    Output is a whole-file copy — no re-cutting. Shows a reconciliation of
+    unmatched clips and rows before writing anything.
+    """
+    if source not in PLAY_SOURCES:
+        raise CutupError(f"--source must be one of {', '.join(PLAY_SOURCES)}.")
+    clip_files = clips_mod.list_clip_files(folder)
+    if not clip_files:
+        raise CutupError(f"No clip files found in {folder}.")
+
+    lib = Library.open(library)
+    try:
+        rows: list[dict] = []
+        if breakdown is not None:
+            headers, data = hudl_mod.read_table(breakdown, header_row)
+            prof = _load_profile(lib, profile, headers)
+            result = hudl_mod.prepare_import(headers, data, prof)
+            rows = result.plays
+            for w in result.warnings:
+                console.print(f"  [yellow]note:[/yellow] {w}")
+
+        rec = clips_mod.match_clips(clip_files, rows, strategy=match, pattern=pattern)
+        console.print(f"[bold]{len(clip_files)}[/bold] clip files in {folder}")
+        _print_reconciliation(rec)
+
+        to_register = list(rec.matched)
+        if keep_unmatched:
+            to_register += [(f, {"play_no": None, "t_start": None, "t_end": None, "tags": {}})
+                            for f in rec.unmatched_files]
+
+        label_prefix = label or Path(folder).name
+        if dry_run:
+            console.print(f"[yellow]dry-run:[/yellow] would register {len(to_register)} "
+                          f"clip(s) under {dest}/ and skip {len(rec.unmatched_rows)} unmatched row(s). "
+                          "Nothing written.")
+            return
+
+        ffprobe = None
+        try:
+            ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
+        except CutupError:
+            console.print("[yellow]note:[/yellow] ffprobe not found; clip durations left unknown.")
+
+        dest_dir = lib.root / dest / label_prefix
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        registered = 0
+        for clip_file, row in to_register:
+            registered += _register_clip(lib, clip_file, row, dest_dir, label_prefix,
+                                         source, confidence, ffprobe)
+        lib.conn.commit()
+        console.print(f"[green]registered[/green] {registered} clip(s); "
+                      f"{len(rec.unmatched_rows)} breakdown row(s) had no clip and were skipped.")
+    finally:
+        lib.close()
+
+
+def _register_clip(lib: Library, clip_file: Path, row: dict, dest_dir: Path,
+                   label_prefix: str, source: str, confidence: float,
+                   ffprobe) -> int:
+    """Copy one clip into the library and register it as a hudl_clip film+play."""
+    import shutil
+
+    target = dest_dir / clip_file.name
+    if target.resolve() != clip_file.resolve():
+        if target.exists():
+            stem, ext = os.path.splitext(clip_file.name)
+            target = dest_dir / f"{stem}_{row.get('play_no') or 'x'}{ext}"
+        shutil.copy2(clip_file, target)
+
+    duration = None
+    if ffprobe is not None:
+        try:
+            duration = probe_mod.probe_film(ffprobe, target).duration
+        except CutupError:
+            duration = None
+
+    rel = store_film_path(lib.root, target)
+    play_no = row.get("play_no")
+    flabel = f"{label_prefix} #{play_no}" if play_no is not None else f"{label_prefix} {clip_file.stem}"
+    cur = lib.conn.execute(
+        "INSERT INTO films (path, label, source_type, duration) VALUES (?,?,?,?)",
+        (rel, flabel, "hudl_clip", duration),
+    )
+    film_id = cur.lastrowid
+    db.insert_play(lib.conn, film_id, play_no, 0.0, duration if duration is not None else 0.0,
+                   source, confidence, row.get("tags", {}))
+    return 1
+
+
 # -- helpers ---------------------------------------------------------------
 
 
@@ -751,9 +876,16 @@ def _print_manifest(clips, out: Path, accurate: bool, encoder: str) -> None:
             f"{c.duration:.1f}s", c.mode, c.out_path.name,
         )
     console.print(table)
-    console.print("[dim]ffmpeg commands:[/dim]")
-    for c in clips:
-        console.print("  " + " ".join(_quote(a) for a in c.argv))
+    ffmpeg_clips = [c for c in clips if c.argv]
+    file_clips = [c for c in clips if not c.argv]
+    if ffmpeg_clips:
+        console.print("[dim]ffmpeg commands:[/dim]")
+        for c in ffmpeg_clips:
+            console.print("  " + " ".join(_quote(a) for a in c.argv))
+    if file_clips:
+        console.print("[dim]whole-file copies:[/dim]")
+        for c in file_clips:
+            console.print(f"  copy {_quote(str(c.film_abs))} -> {_quote(c.out_path.name)}")
 
 
 def _quote(arg: str) -> str:

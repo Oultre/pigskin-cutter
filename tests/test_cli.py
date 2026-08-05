@@ -99,6 +99,43 @@ def test_full_flow_dry_run_and_export(tmp_path):
 
 
 @requires_ffmpeg
+def test_precut_clips_import_reconcile_and_export(tmp_path):
+    lib = _init(tmp_path)
+
+    # three pre-cut clip files in an external folder
+    clipdir = tmp_path / "download"
+    clipdir.mkdir()
+    for n in (1, 2, 3):
+        _make_testsrc(clipdir / f"{n}.mp4", seconds=2)
+
+    # breakdown has FOUR rows -> play 4 was skipped in the download (a penalty)
+    bd = tmp_path / "bd.csv"
+    bd.write_text(
+        "PLAY #,ODK,OFF FORM\n1,O,TRIPS\n2,O,ACE\n3,D,\n4,O,TRIPS\n", encoding="utf-8"
+    )
+
+    res = runner.invoke(app, ["clips", "import", str(clipdir), "--breakdown", str(bd),
+                              "--match", "number", "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    assert "registered 3" in res.output          # 3 clips registered
+    assert "play_no=4" in res.output             # row 4 surfaced as unmatched
+    assert "had no clip and were skipped" in res.output
+
+    # each clip became its own hudl_clip film with one play
+    res = runner.invoke(app, ["film", "ls", "-L", str(lib)])
+    assert res.output.count("hudl_clip") == 3
+
+    # filter offense trips -> plays 1 (and 4 was skipped), export copies whole files
+    outdir = tmp_path / "cuts"
+    res = runner.invoke(app, ["export", "--out", str(outdir), "--where", "off_form=TRIPS",
+                              "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    files = list(outdir.glob("*.mp4"))
+    assert len(files) == 1                       # only play 1 had a clip AND trips
+    assert files[0].stat().st_size > 0
+
+
+@requires_ffmpeg
 def test_film_add_refuses_outside_library(tmp_path):
     lib = _init(tmp_path)
     outside = tmp_path / "outside.mp4"
