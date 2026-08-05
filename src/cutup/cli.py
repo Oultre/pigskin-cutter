@@ -22,7 +22,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, db, ffmpeg as ffmpeg_mod, filters as filters_mod, presets as presets_mod
+from . import (
+    __version__, db, ffmpeg as ffmpeg_mod, films as films_mod,
+    filters as filters_mod, presets as presets_mod,
+)
 from .config import Config
 from .errors import CutupError
 from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, probe as probe_mod
@@ -217,9 +220,7 @@ def film_add(
     lib = Library.open(library)
     try:
         rel = store_film_path(lib.root, path)  # refuses films outside the library
-        ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
-        info = probe_mod.probe_film(ffprobe, path)
-        checksum = probe_mod.quick_checksum(path)
+        info = films_mod.probe_film_info(lib, path)
 
         console.print(f"[bold]{path.name}[/bold]  ({source_type})")
         console.print(f"  stored path : {rel}")
@@ -234,14 +235,9 @@ def film_add(
             console.print("[yellow]dry-run:[/yellow] nothing written.")
             return
 
-        cur = lib.conn.execute(
-            "INSERT INTO films (path, label, source_type, fps, duration, codec, "
-            "container, interlaced, checksum) VALUES (?,?,?,?,?,?,?,?,?)",
-            (rel, label, source_type, info.fps, info.duration, info.codec,
-             info.container, info.interlaced, checksum),
-        )
+        film_id = films_mod.register_film(lib, path, label, source_type)
         lib.conn.commit()
-        console.print(f"[green]added film[/green] id={cur.lastrowid}")
+        console.print(f"[green]added film[/green] id={film_id}")
     finally:
         lib.close()
 

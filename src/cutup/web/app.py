@@ -23,12 +23,14 @@ from pydantic import BaseModel
 
 from .. import (
     ffmpeg as ffmpeg_mod,
+    films as films_mod,
     filters as filters_mod,
     presets as presets_mod,
     render as render_mod,
 )
 from ..errors import CutupError
 from ..library import Library
+from ..models import SOURCE_TYPES
 from ..paths import resolve_film_path
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -47,6 +49,12 @@ class PresetBody(BaseModel):
     name: str
     filter: dict = {}
     output: dict = {}
+
+
+class FilmBody(BaseModel):
+    path: str
+    label: Optional[str] = None
+    source_type: str = "broadcast"
 
 
 class PresetImport(BaseModel):
@@ -132,6 +140,30 @@ def create_app(library_root: Path) -> FastAPI:
             "FROM films f ORDER BY f.id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    @app.get("/api/source-types")
+    def source_types():
+        return list(SOURCE_TYPES)
+
+    @app.get("/api/library-films")
+    def library_films(lib: Library = Depends(get_library)):
+        """Video files in the library folder that are not registered yet."""
+        return films_mod.list_library_films(lib)
+
+    @app.post("/api/films")
+    def add_film(body: FilmBody, lib: Library = Depends(get_library)):
+        film_id = films_mod.register_film(lib, body.path, body.label, body.source_type)
+        lib.conn.commit()
+        row = lib.conn.execute("SELECT * FROM films WHERE id = ?", (film_id,)).fetchone()
+        return dict(row)
+
+    @app.delete("/api/films/{film_id}")
+    def remove_film(film_id: int, lib: Library = Depends(get_library)):
+        removed = films_mod.remove_film(lib, film_id)
+        lib.conn.commit()
+        if not removed:
+            raise HTTPException(status_code=404, detail="No such film.")
+        return {"deleted": film_id}
 
     # -- filter-builder support -------------------------------------------
 

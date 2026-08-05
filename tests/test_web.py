@@ -114,6 +114,26 @@ def test_presets_crud(client):
     assert client.delete("/api/presets/nope").status_code == 404
 
 
+def test_source_types_endpoint(client):
+    types = client.get("/api/source-types").json()
+    assert "all22" in types and "drone" in types
+
+
+def test_library_films_lists_unregistered(tmp_path):
+    # a library whose folder has an unregistered video file
+    root = _library_with_plays(tmp_path)
+    (root / "new-game.mp4").write_bytes(b"x")
+    client = TestClient(create_app(root))
+    listed = client.get("/api/library-films").json()
+    assert "new-game.mp4" in listed          # g.mp4 is registered, so excluded
+    assert "g.mp4" not in listed
+
+
+def test_add_film_bad_type_is_400(client):
+    r = client.post("/api/films", json={"path": "x.mp4", "source_type": "bogus"})
+    assert r.status_code == 400
+
+
 def test_presets_export_import(client):
     client.post("/api/presets", json={"name": "runs", "filter": {"where": ["play_type=Run"]}})
     exported = client.get("/api/presets/export").json()

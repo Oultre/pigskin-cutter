@@ -11,6 +11,16 @@ async function j(res) {
 
 export const getDiagnostics = () => fetch('/api/diagnostics').then(j)
 export const getFilms = () => fetch('/api/films').then(j)
+export const getSourceTypes = () => fetch('/api/source-types').then(j)
+export const getLibraryFilms = () => fetch('/api/library-films').then(j)
+export const registerFilm = (body) =>
+  fetch('/api/films', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+export const deleteFilm = (id) =>
+  fetch('/api/films/' + id, { method: 'DELETE' }).then(j)
 export const getTagKeys = () => fetch('/api/tag-keys').then(j)
 export const getTagValues = (key) =>
   fetch('/api/tag-values?key=' + encodeURIComponent(key)).then(j)

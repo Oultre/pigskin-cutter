@@ -2,10 +2,20 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl,
   getPresets, savePreset, deletePreset, exportPresets, importPresets,
+  getSourceTypes, getLibraryFilms, registerFilm, deleteFilm,
 } from './api.js'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
 const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
+
+const SOURCE_LABELS = {
+  hudl_clip: 'Hudl clips (pre-cut)',
+  hudl_game: 'Hudl game film',
+  broadcast: 'TV broadcast',
+  all22: 'All-22 (NFL / NCAA)',
+  drone: 'Drone (DJI)',
+}
+const sourceLabel = (s) => SOURCE_LABELS[s] || s
 
 function fmt(t) {
   if (t === null || t === undefined) return '—'
@@ -322,6 +332,88 @@ function ExportPanel({ filter, count }) {
   )
 }
 
+// -- Film library / import --------------------------------------------------
+
+function FilmLibrary({ films, onChanged }) {
+  const [available, setAvailable] = useState([])
+  const [sourceTypes, setSourceTypes] = useState(Object.keys(SOURCE_LABELS))
+  const [path, setPath] = useState('')
+  const [label, setLabel] = useState('')
+  const [stype, setStype] = useState('broadcast')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const refreshAvailable = () => getLibraryFilms().then(setAvailable).catch(() => {})
+  useEffect(() => {
+    refreshAvailable()
+    getSourceTypes().then(setSourceTypes).catch(() => {})
+  }, [films])
+
+  const add = async () => {
+    setError(''); setBusy(true)
+    try {
+      await registerFilm({ path, label: label || null, source_type: stype })
+      setPath(''); setLabel('')
+      onChanged()
+    } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+  const remove = async (id) => {
+    if (!window.confirm('Remove this film and its plays from the index? (The file stays on disk.)')) return
+    try { await deleteFilm(id); onChanged() } catch (e) { setError(e.message) }
+  }
+
+  return (
+    <div className="films-view">
+      <div className="film-add">
+        <h2>Add film</h2>
+        <label>File in library folder</label>
+        <div className="row">
+          <input value={path} onChange={(e) => setPath(e.target.value)}
+            placeholder="e.g. 2026/mines-vs-csc.mp4" style={{ flex: 1 }} />
+          <select value="" onChange={(e) => e.target.value && setPath(e.target.value)} style={{ width: '9rem' }}>
+            <option value="">browse…</option>
+            {available.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </div>
+        <div className="row">
+          <div style={{ flex: 1 }}>
+            <label>Label</label>
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="CSC @ Mines" style={{ width: '100%' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Source type</label>
+            <select value={stype} onChange={(e) => setStype(e.target.value)} style={{ width: '100%' }}>
+              {sourceTypes.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
+            </select>
+          </div>
+        </div>
+        <button className="primary" onClick={add} disabled={busy || !path}>Register film</button>
+        <span className="hint2">Probes fps · codec · interlace · duration. The file must be inside the library folder.</span>
+        {error && <div className="error">{error}</div>}
+      </div>
+
+      <div className="film-list">
+        <h2>Films in library ({films.length})</h2>
+        {films.length === 0 && <div className="empty">No films yet. Add one above.</div>}
+        {films.map((f) => (
+          <div className="film-row" key={f.id}>
+            <div>
+              <div className="fname">{f.label || f.path}</div>
+              <div className="fmeta">
+                {sourceLabel(f.source_type)} · {f.plays} plays
+                {f.fps ? ` · ${Math.round(f.fps)}fps` : ''}
+                {f.interlaced === 1 ? ' · interlaced' : ''}
+                <span className="fpath"> · {f.path}</span>
+              </div>
+            </div>
+            <button className="x" onClick={() => remove(f.id)}>remove</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // -- App --------------------------------------------------------------------
 
 export default function App() {
@@ -332,16 +424,25 @@ export default function App() {
   const [plays, setPlays] = useState([])
   const [selected, setSelected] = useState(null)
   const [presets, setPresets] = useState([])
+  const [view, setView] = useState('plays')
   const [error, setError] = useState('')
 
   const refreshPresets = () => getPresets().then(setPresets).catch(() => {})
+  const refreshFilms = () => getFilms().then(setFilms).catch((e) => setError(e.message))
 
   useEffect(() => {
-    getFilms().then(setFilms).catch((e) => setError(e.message))
+    refreshFilms()
     getTagKeys().then(setTagKeys).catch(() => {})
     getPlays({ where: [] }).then((res) => setPlays(res.plays)).catch(() => {})
     refreshPresets()
   }, [])
+
+  // After a film is added/removed, refresh films + tag keys + the play grid.
+  const onFilmsChanged = async () => {
+    await refreshFilms()
+    getTagKeys().then(setTagKeys).catch(() => {})
+    try { setPlays((await getPlays(filter)).plays) } catch { /* ignore */ }
+  }
 
   const applyForm = async (f) => {
     const q = formToQuery(f); setFilter(q); setError('')
@@ -393,9 +494,16 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Pigskin Cutter</h1>
+        <nav>
+          <button className={view === 'plays' ? 'active' : ''} onClick={() => setView('plays')}>Plays</button>
+          <button className={view === 'films' ? 'active' : ''} onClick={() => setView('films')}>Films</button>
+        </nav>
         <span className="films">{films.length} film(s), {films.reduce((n, f) => n + (f.plays || 0), 0)} plays</span>
       </header>
       {error && <div className="error banner">{error}</div>}
+      {view === 'films' ? (
+        <FilmLibrary films={films} onChanged={onFilmsChanged} />
+      ) : (
       <div className="cols">
         <aside>
           <PresetBar presets={presets} onLoad={loadPreset} onSave={savePresetNow} onDelete={deletePresetNow}
@@ -411,6 +519,7 @@ export default function App() {
           <Preview play={selected} onChange={onPlayChange} />
         </section>
       </div>
+      )}
     </div>
   )
 }
