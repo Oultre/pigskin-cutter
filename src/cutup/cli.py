@@ -91,8 +91,30 @@ def serve(
     root = Library.resolve_root(library)
     # Fail fast with a legible error if the library is not there.
     Library.open(library).close()
+    _ensure_port_free(host, port)
     console.print(f"Serving {root} at http://{host}:{port}  (Ctrl+C to stop)")
     uvicorn.run(create_app(root), host=host, port=port, log_level="warning")
+
+
+def _ensure_port_free(host: str, port: int) -> None:
+    """Raise a legible error if something is already listening on host:port.
+
+    Without this, a busy default port surfaces to the user only as an opaque
+    "Failed to fetch" in the browser (CLAUDE.md: errors legible to a friend).
+    """
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError as exc:
+        raise CutupError(
+            f"Port {port} on {host} is already in use, so the UI can't start "
+            f"(it would show as 'Failed to fetch' in the browser).\n"
+            f"Pick another port, e.g. `cutup serve --port 8777`."
+        ) from exc
+    finally:
+        probe.close()
 
 
 @app.command()

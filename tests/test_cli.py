@@ -35,6 +35,23 @@ def _init(tmp_path):
     return tmp_path / "lib"
 
 
+def test_serve_reports_busy_port():
+    import socket
+
+    from cutup.cli import _ensure_port_free
+    from cutup.errors import CutupError
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))          # OS picks a free port
+    s.listen()
+    busy_port = s.getsockname()[1]
+    try:
+        with pytest.raises(CutupError, match="already in use"):
+            _ensure_port_free("127.0.0.1", busy_port)
+    finally:
+        s.close()
+
+
 def test_init_and_config(tmp_path):
     lib = _init(tmp_path)
     res = runner.invoke(app, ["config", "get", "-L", str(lib)])

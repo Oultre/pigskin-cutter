@@ -253,6 +253,8 @@ export default function App() {
   useEffect(() => {
     getFilms().then(setFilms).catch((e) => setError(e.message))
     getTagKeys().then(setTagKeys).catch(() => {})
+    // Load all plays on open so the grid isn't blank before the first Apply.
+    getPlays({ where: [] }).then((res) => setPlays(res.plays)).catch(() => {})
   }, [])
 
   const runFilter = async (f) => {
