@@ -103,19 +103,16 @@ def calibrate(ffmpeg: str, video: Path, template: RegionTemplate, labels: dict) 
 # -- scan ------------------------------------------------------------------
 
 
-def scan_clockmap(ffmpeg: str, ffprobe: str, video: Path, template: RegionTemplate,
-                  glyphs: GlyphSet, *, start: float = 0.0, end: float | None = None,
-                  fps: float = 1.0, conf_floor: float = 0.5, progress=None):
-    """Stream the bug band and read it into (ClockMap, play_clock series, stats).
-
-    Frames where the game clock or quarter don't read cleanly (animation,
-    occlusion, replay) are dropped — those are dropouts, not data (§2C.5).
-    """
-    W, H = _dimensions(ffprobe, video)
+def _scan_samples(ffmpeg: str, ffprobe: str, video: Path, template: RegionTemplate,
+                  glyphs: GlyphSet, *, start: float, end: float | None,
+                  fps: float, conf_floor: float, W: int, H: int, progress=None):
+    """Read one time range into (clock samples, play_clock series, stats)."""
     gc, qt, pc = (template.region(n) for n in ("game_clock", "quarter", "play_clock"))
     band_y, band_h = int(gc.y * H), int(gc.h * H)
 
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", f"{start:.3f}"]
+    # one decode thread per worker so N parallel workers map to N cores cleanly
+    # (ffmpeg decodes multi-threaded by default, which oversubscribes under a pool)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-threads", "1", "-ss", f"{start:.3f}"]
     if end is not None:
         cmd += ["-to", f"{end:.3f}"]
     cmd += ["-i", str(video), "-vf", f"fps={fps},crop={W}:{band_h}:0:{band_y}",
@@ -159,8 +156,49 @@ def scan_clockmap(ffmpeg: str, ffprobe: str, video: Path, template: RegionTempla
 
     proc.stdout.close()
     proc.wait()
-    stats = {"frames_read": read, "clock_samples": kept}
-    return ClockMap.from_samples(samples), playclock, stats
+    return samples, playclock, {"frames_read": read, "clock_samples": kept}
+
+
+def scan_clockmap(ffmpeg, ffprobe, video, template, glyphs, *, start=0.0, end=None,
+                  fps=1.0, conf_floor=0.5, workers=None, progress=None):
+    """Read the film's score bug into (ClockMap, play_clock series, stats).
+
+    OCR is cheap (~5ms/frame); ffmpeg decode dominates, and scanning is
+    independent per time range — so the range is split across ``workers`` ffmpeg
+    processes and the samples merged into one map. Frames that don't read cleanly
+    (animation, occlusion, replay) are dropped — dropouts, not data (§2C.5).
+    """
+    import concurrent.futures as cf
+    import os
+
+    W, H = _dimensions(ffprobe, video)
+    if end is None:
+        from ..ingest.probe import probe_film
+        end = probe_film(ffprobe, video).duration or (start + 1)
+    workers = workers or min(max((os.cpu_count() or 2) - 1, 1), 8)
+    span = (end - start) / workers
+    ranges = [(start + i * span, start + (i + 1) * span) for i in range(workers)]
+
+    all_samples, all_pc = [], []
+    total = {"frames_read": 0, "clock_samples": 0}
+    done = {"n": 0}
+
+    def _run(r):
+        return _scan_samples(ffmpeg, ffprobe, video, template, glyphs,
+                             start=r[0], end=r[1], fps=fps, conf_floor=conf_floor, W=W, H=H)
+
+    with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+        for samples, pc, stats in pool.map(_run, ranges):
+            all_samples.extend(samples)
+            all_pc.extend(pc)
+            total["frames_read"] += stats["frames_read"]
+            total["clock_samples"] += stats["clock_samples"]
+            done["n"] += 1
+            if progress:
+                progress(total["frames_read"], total["clock_samples"])
+
+    all_pc.sort(key=lambda p: p[0])
+    return ClockMap.from_samples(all_samples), all_pc, total
 
 
 def _is_clock(text: str) -> bool:

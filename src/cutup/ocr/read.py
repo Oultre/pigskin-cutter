@@ -90,12 +90,32 @@ def normalize_char(bw: np.ndarray, a: int, b: int) -> np.ndarray:
     return cv2.resize(col, CANON, interpolation=cv2.INTER_AREA)
 
 
+def _normalize_vec(glyph: np.ndarray) -> np.ndarray:
+    """Flatten to a mean-subtracted unit vector (so a dot product == TM_CCOEFF_NORMED)."""
+    v = glyph.astype(np.float32).ravel()
+    v -= v.mean()
+    n = float(np.linalg.norm(v))
+    return v / n if n > 0 else v
+
+
 @dataclass
 class GlyphSet:
     templates: dict[str, list[np.ndarray]] = field(default_factory=dict)
+    _matrix: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _labels: list[str] = field(default_factory=list, repr=False, compare=False)
 
     def add(self, label: str, glyph: np.ndarray) -> None:
         self.templates.setdefault(label, []).append(glyph)
+        self._matrix = None          # invalidate the classification index
+
+    def _build_index(self) -> None:
+        vecs, labels = [], []
+        for label, refs in self.templates.items():
+            for ref in refs:
+                vecs.append(_normalize_vec(ref))
+                labels.append(label)
+        self._matrix = np.stack(vecs) if vecs else np.zeros((0, 1), np.float32)
+        self._labels = labels
 
     def save_npz(self, path) -> None:
         """Persist the glyph library (a bundle-able artifact per package)."""
@@ -117,17 +137,18 @@ class GlyphSet:
         return gs
 
     def classify(self, glyph: np.ndarray, whitelist: str | None = None) -> tuple[str, float]:
-        g = glyph.astype(np.float32)
-        best_label, best_score = "?", -1.0
-        for label, refs in self.templates.items():
-            if whitelist is not None and label not in whitelist:
-                continue
-            for ref in refs:
-                score = float(cv2.matchTemplate(g, ref.astype(np.float32),
-                                                cv2.TM_CCOEFF_NORMED)[0, 0])
-                if score > best_score:
-                    best_label, best_score = label, score
-        return best_label, max(0.0, best_score)
+        if self._matrix is None:
+            self._build_index()
+        if self._matrix.shape[0] == 0:
+            return "?", 0.0
+        # correlation with every template in one matmul (all glyphs are CANON-sized,
+        # so a normalized dot product equals matchTemplate's TM_CCOEFF_NORMED)
+        scores = self._matrix @ _normalize_vec(glyph)
+        if whitelist is not None:
+            allowed = np.array([lb in whitelist for lb in self._labels])
+            scores = np.where(allowed, scores, -1.0)
+        i = int(np.argmax(scores))
+        return self._labels[i], max(0.0, float(scores[i]))
 
 
 def build_glyphs(labeled, polarity: str = "auto") -> GlyphSet:
