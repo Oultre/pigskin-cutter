@@ -597,7 +597,12 @@ broadcast archive. Worth knowing that's where the money goes.
 
 3. **~10 native-resolution frames** spanning all 3–4 seasons, ideally including one from
    each season opener — confirms whether the RMAC Network graphics package holds steady or
-   needs multiple templates.
+   needs multiple templates. *(Now the active blocker: the Phase 7 alignment engine is built
+   and tested — clock map, drive-anchored placement, play-clock snap refinement, `cutup
+   align` — but the OCR **reader** that produces the clock map and play-clock series can't be
+   built or the feasibility re-checked without these frames. Drop them in
+   `tests/fixtures/frames/`, including a pre-snap/post-snap pair to confirm the play-clock
+   reset in §2C.2.)*
 4. **A few frames captured immediately pre-snap and immediately post-snap** — confirms the
    play-clock blank/reset behavior that §2C.2 depends on, and answers the possession
    question in §2C.3.

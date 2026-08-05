@@ -232,6 +232,8 @@ def parse(html: str) -> ParsedPBP:
     result = ParsedPBP()
     quarter = None
     possession = None
+    drive_no = 0
+    drive_clock = None   # game clock ("MM:SS") at the current drive's start
     teams: list[str] = []
     n = 0
 
@@ -242,14 +244,16 @@ def parse(html: str) -> ParsedPBP:
         if qm:
             quarter = int(qm.group(1))
 
-        # a drive-start marker sets possession; read the team from the cell that
-        # holds "... drive start at MM:SS", not the joined row (which is prefixed
-        # by the down-distance spot).
+        # a drive-start marker sets possession + a clock anchor for alignment; read
+        # the team from the cell that holds "... drive start at MM:SS", not the
+        # joined row (which is prefixed by the down-distance spot).
         drive_cell = next((c for c in cells if "drive start at" in c.lower()), None)
         if drive_cell:
             dm = _DRIVE_RE.match(drive_cell)
             if dm:
                 possession = dm.group(1).strip()
+                drive_clock = dm.group(2)      # "MM:SS" — an anchor Phase 7 aligns on
+                drive_no += 1
                 if possession not in teams:
                     teams.append(possession)
             continue   # not a play
@@ -269,10 +273,15 @@ def parse(html: str) -> ParsedPBP:
             tags["possession"] = possession
         if quarter:
             tags["quarter"] = str(quarter)
+        if drive_no:
+            tags["drive"] = str(drive_no)
+        if drive_clock:
+            tags["drive_clock"] = drive_clock
         tags["pbp_text"] = re.sub(r"\s+", " ", desc)[:300]
-        result.plays.append(
-            {"play_no": n, "quarter": quarter, "possession": possession, "tags": tags}
-        )
+        result.plays.append({
+            "play_no": n, "quarter": quarter, "possession": possession,
+            "drive": drive_no, "drive_clock": drive_clock, "tags": tags,
+        })
 
     result.teams = teams
     if not result.plays:

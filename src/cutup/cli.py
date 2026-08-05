@@ -23,9 +23,11 @@ from rich.console import Console
 from rich.table import Table
 
 from . import (
-    __version__, db, ffmpeg as ffmpeg_mod, films as films_mod,
+    __version__, align as align_mod, db, ffmpeg as ffmpeg_mod, films as films_mod,
     filters as filters_mod, presets as presets_mod,
 )
+from .ocr.clockmap import ClockMap
+from .ocr.templates import RegionTemplate
 from .config import Config
 from .errors import CutupError
 from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, pbp as pbp_mod, probe as probe_mod
@@ -53,6 +55,7 @@ import_app.add_typer(profile_app, name="profile")
 clips_app = typer.Typer(no_args_is_help=True, help="Import pre-cut Hudl clip folders.")
 preset_app = typer.Typer(no_args_is_help=True, help="Save and reuse filter presets.")
 pbp_app = typer.Typer(no_args_is_help=True, help="Ingest published play-by-play.")
+ocr_app = typer.Typer(no_args_is_help=True, help="Score-bug OCR region templates.")
 app.add_typer(film_app, name="film")
 app.add_typer(play_app, name="play")
 app.add_typer(config_app, name="config")
@@ -60,6 +63,7 @@ app.add_typer(import_app, name="import")
 app.add_typer(clips_app, name="clips")
 app.add_typer(preset_app, name="preset")
 app.add_typer(pbp_app, name="pbp")
+app.add_typer(ocr_app, name="ocr")
 
 # Shared option definition so every command resolves the library the same way.
 LibraryOpt = typer.Option(
@@ -1109,6 +1113,134 @@ def pbp_import(
         console.print(f"[green]imported[/green] {parsed.count} pbp plays into film {film}")
     finally:
         lib.close()
+
+
+# -- align -----------------------------------------------------------------
+
+
+@app.command()
+def align(
+    film: int = typer.Option(..., "--film", help="Film id whose pbp plays to place."),
+    clockmap: Path = typer.Option(..., "--clockmap", help="Clock-map JSON (video<->game clock; from OCR)."),
+    pre: Optional[float] = typer.Option(None, "--pre", help="Pre-roll seconds (default: config)."),
+    post: Optional[float] = typer.Option(None, "--post", help="Post-roll seconds (default: config)."),
+    snap_gap: float = typer.Option(30.0, "--snap-gap", help="Fallback seconds between snaps in a drive."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the placement; write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Place a film's play-by-play plays on the video timeline using a clock map.
+
+    Times are inferred, so placed plays get confidence 0.6 and an `align` tag.
+    Snap refinement (exact frame via the play-clock reset) comes with OCR.
+    """
+    lib = Library.open(library)
+    try:
+        cm = ClockMap.from_json(json.loads(Path(clockmap).read_text(encoding="utf-8")))
+        rows = lib.conn.execute(
+            "SELECT id, play_no FROM plays WHERE film_id = ? AND source = 'pbp' "
+            "ORDER BY play_no", (film,)
+        ).fetchall()
+        if not rows:
+            raise CutupError(f"No pbp plays on film {film}. Import play-by-play first.")
+
+        plays, id_by_no = [], {}
+        for r in rows:
+            id_by_no[r["play_no"]] = r["id"]
+            tags = _tags_for_play(lib, r["id"])
+            plays.append(align_mod.AlignPlay(
+                play_no=r["play_no"],
+                quarter=int(tags["quarter"]) if tags.get("quarter") else None,
+                drive=int(tags["drive"]) if tags.get("drive") else None,
+                drive_clock=tags.get("drive_clock"),
+            ))
+
+        placements = align_mod.estimate_snaps(cm, plays, snap_gap=snap_gap)
+        cut = align_mod.to_cut_times(
+            placements,
+            pre if pre is not None else lib.config.pre_roll,
+            post if post is not None else lib.config.post_roll,
+        )
+        placed = [p for p in placements if p.video_sec is not None]
+        console.print(f"[bold]{len(placed)}[/bold] of {len(placements)} pbp plays placed"
+                      f"  ({len(placements) - len(placed)} unplaced)")
+
+        if dry_run:
+            table = Table(show_header=True, header_style="bold")
+            for c in ("no", "method", "snap", "t_start", "t_end"):
+                table.add_column(c)
+            for p in placements[:24]:
+                ct = cut.get(p.play_no)
+                table.add_row(
+                    str(p.play_no), p.method,
+                    format_time(p.video_sec) if p.video_sec is not None else "-",
+                    format_time(ct[0]) if ct else "-", format_time(ct[1]) if ct else "-",
+                )
+            console.print(table)
+            console.print(f"[yellow]dry-run:[/yellow] {len(placed)} plays would be timed, nothing written.")
+            return
+
+        by_no = {p.play_no: p for p in placements}
+        for play_no, (t_start, t_end) in cut.items():
+            lib.conn.execute("UPDATE plays SET t_start=?, t_end=?, confidence=? WHERE id=?",
+                             (t_start, t_end, 0.6, id_by_no[play_no]))
+            lib.conn.execute(
+                "INSERT INTO tags (play_id, key, value, source, confidence) "
+                "VALUES (?, 'align', ?, 'detected', 0.6) "
+                "ON CONFLICT(play_id, key) DO UPDATE SET value=excluded.value",
+                (id_by_no[play_no], by_no[play_no].method),
+            )
+        lib.conn.commit()
+        console.print(f"[green]aligned[/green] {len(cut)} plays on film {film} "
+                      "(confidence 0.6; refine with OCR play-clock later)")
+    finally:
+        lib.close()
+
+
+# -- ocr templates ---------------------------------------------------------
+
+
+@ocr_app.command("ls")
+def ocr_ls(library: Optional[Path] = LibraryOpt):
+    """List saved score-bug region templates."""
+    lib = Library.open(library)
+    for t in RegionTemplate.list_all(lib.conn):
+        console.print(f"[bold]{t.name}[/bold] ({t.broadcaster or '?'}/{t.season or '?'}): "
+                      f"{', '.join(r.name for r in t.regions) or 'no regions'}")
+    lib.close()
+
+
+@ocr_app.command("show")
+def ocr_show(name: str = typer.Argument(...), library: Optional[Path] = LibraryOpt):
+    """Print a template's regions."""
+    lib = Library.open(library)
+    t = RegionTemplate.load(lib.conn, name)
+    if t is None:
+        raise CutupError(f"No template named {name!r}.")
+    console.print(f"[bold]{t.name}[/bold] broadcaster={t.broadcaster} season={t.season}")
+    for r in t.regions:
+        console.print(f"  {r.name}: box=({r.x},{r.y},{r.w},{r.h}) polarity={r.polarity} "
+                      f"whitelist={r.whitelist or '-'}")
+    lib.close()
+
+
+@ocr_app.command("save")
+def ocr_save(
+    name: str = typer.Argument(...),
+    from_file: Path = typer.Option(..., "--from", help="JSON: {broadcaster, season, regions:[...]}"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Save a region template from a JSON file (the drag-to-define UI comes later)."""
+    from .ocr.templates import Region
+    data = json.loads(Path(from_file).read_text(encoding="utf-8"))
+    tmpl = RegionTemplate(
+        name=name, broadcaster=data.get("broadcaster"), season=data.get("season"),
+        regions=[Region(**r) for r in data.get("regions", [])],
+    )
+    lib = Library.open(library)
+    tmpl.save(lib.conn)
+    lib.conn.commit()
+    console.print(f"[green]saved template[/green] {name} with {len(tmpl.regions)} region(s)")
+    lib.close()
 
 
 # -- helpers ---------------------------------------------------------------

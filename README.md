@@ -20,8 +20,12 @@ column-mapping profiles. Phase 3: pre-cut Hudl clips end to end — match a fold
 breakdown rows, reconcile the drift, and export by whole-file copy. Phase 4: a local web UI
 (FastAPI + React) over the same engine, incl. a keyboard/gamepad **tag pass** (Phase 5).
 Phase 6: **play-by-play ingest** — fetch (cached) and parse published athletics-site PBP into
-possession/down/distance/result/play-type. OCR + alignment (7) and batch/packaging/reels are
-the remaining phases (`docs/PLAN.md` §6).
+possession/down/distance/result/play-type. Phase 7 (in progress): the **alignment engine** —
+a video↔game-clock clock map, drive-anchored play placement, and play-clock snap refinement
+(`cutup align`) that puts PBP plays on the video timeline. The **score-bug OCR reader** that
+feeds the clock map is scaffolded (pluggable backend + region-template model) but not built —
+it needs real native-resolution frames (`tests/fixtures/frames/`) and OpenCV. Batch/packaging/
+reels remain (`docs/PLAN.md` §6).
 
 ```bash
 cutup film stub mines-vs-csc --source-type broadcast
