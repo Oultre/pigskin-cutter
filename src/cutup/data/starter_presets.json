@@ -1,0 +1,13 @@
+{
+  "presets": [
+    { "name": "Offense", "filter": { "where": ["odk=O"] } },
+    { "name": "Defense", "filter": { "where": ["odk=D"] } },
+    { "name": "1st & 10", "filter": { "where": ["down=1", "distance=10"] } },
+    { "name": "3rd & short", "filter": { "where": ["down=3", "distance<=3"] } },
+    { "name": "3rd & long", "filter": { "where": ["down=3", "distance>=7"] } },
+    { "name": "Run plays", "filter": { "where": ["play_type=Run"] } },
+    { "name": "Pass plays", "filter": { "where": ["play_type=Pass"] } },
+    { "name": "Explosive (15+ yds)", "filter": { "where": ["gain>=15"] } },
+    { "name": "Needs review (OCR)", "filter": { "source": "ocr" } }
+  ]
+}

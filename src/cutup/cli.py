@@ -972,6 +972,52 @@ def preset_rm(name: str = typer.Argument(...), library: Optional[Path] = Library
     lib.close()
 
 
+@preset_app.command("export")
+def preset_export(
+    out: Optional[Path] = typer.Argument(None, help="File to write (default: stdout)."),
+    name: Optional[List[str]] = typer.Option(None, "--name", help="Only these presets (repeatable)."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Export presets to a shareable JSON pack."""
+    lib = Library.open(library)
+    try:
+        pack = {"presets": presets_mod.export_presets(lib.conn, list(name) if name else None)}
+        text = json.dumps(pack, indent=2)
+        if out:
+            Path(out).write_text(text + "\n", encoding="utf-8")
+            console.print(f"[green]exported[/green] {len(pack['presets'])} preset(s) to {out}")
+        else:
+            print(text)
+    finally:
+        lib.close()
+
+
+@preset_app.command("import")
+def preset_import(
+    file: Optional[Path] = typer.Argument(None, help="A preset pack JSON (from `preset export`)."),
+    starter: bool = typer.Option(False, "--starter", help="Import the bundled starter pack of common filters."),
+    overwrite: bool = typer.Option(True, "--overwrite/--skip-existing",
+                                   help="Replace same-named presets, or keep the existing ones."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Import a preset pack, sharing filters between libraries or people."""
+    if starter:
+        from importlib.resources import files
+        text = files("cutup.data").joinpath("starter_presets.json").read_text(encoding="utf-8")
+    elif file:
+        text = Path(file).read_text(encoding="utf-8")
+    else:
+        raise CutupError("Pass a pack file, or --starter for the bundled pack.")
+    data = json.loads(text)
+    lib = Library.open(library)
+    try:
+        imported, skipped = presets_mod.import_presets(lib.conn, data, overwrite=overwrite)
+        lib.conn.commit()
+        console.print(f"[green]imported[/green] {imported}, skipped {skipped}")
+    finally:
+        lib.close()
+
+
 # -- helpers ---------------------------------------------------------------
 
 

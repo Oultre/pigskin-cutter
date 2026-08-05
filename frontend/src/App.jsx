@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl,
-  getPresets, savePreset, deletePreset,
+  getPresets, savePreset, deletePreset, exportPresets, importPresets,
 } from './api.js'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
@@ -61,9 +61,21 @@ function formToQuery(form) {
 
 // -- Presets ----------------------------------------------------------------
 
-function PresetBar({ presets, onLoad, onSave, onDelete }) {
+function PresetBar({ presets, onLoad, onSave, onDelete, onExport, onImport }) {
   const [name, setName] = useState('')
   const [sel, setSel] = useState('')
+  const fileRef = useRef(null)
+
+  const pickFile = () => fileRef.current && fileRef.current.click()
+  const onFile = async (e) => {
+    const file = e.target.files[0]
+    e.target.value = ''            // allow re-importing the same file
+    if (!file) return
+    try {
+      onImport(JSON.parse(await file.text()))
+    } catch (err) { onImport(null, 'Could not read that file: ' + err.message) }
+  }
+
   return (
     <div className="panel presets">
       <h2>Presets</h2>
@@ -77,6 +89,11 @@ function PresetBar({ presets, onLoad, onSave, onDelete }) {
       <div className="row">
         <input placeholder="save current filter as…" value={name} onChange={(e) => setName(e.target.value)} />
         <button disabled={!name.trim()} onClick={() => { onSave(name.trim()); setName('') }}>Save</button>
+      </div>
+      <div className="row">
+        <button onClick={pickFile}>Import…</button>
+        <button disabled={!presets.length} onClick={onExport}>Export</button>
+        <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFile} />
       </div>
     </div>
   )
@@ -336,6 +353,22 @@ export default function App() {
     try { await deletePreset(name); await refreshPresets() }
     catch (e) { setError(e.message) }
   }
+  const exportPresetsNow = async () => {
+    try {
+      const pack = await exportPresets()
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'cutup-presets.json'; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { setError(e.message) }
+  }
+  const importPresetsNow = async (data, errMsg) => {
+    if (errMsg) { setError(errMsg); return }
+    const list = Array.isArray(data) ? data : (data && data.presets) || []
+    try { await importPresets(list); await refreshPresets() }
+    catch (e) { setError(e.message) }
+  }
 
   const onPlayChange = (updated) => {
     setPlays((ps) => ps.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
@@ -351,7 +384,8 @@ export default function App() {
       {error && <div className="error banner">{error}</div>}
       <div className="cols">
         <aside>
-          <PresetBar presets={presets} onLoad={loadPreset} onSave={savePresetNow} onDelete={deletePresetNow} />
+          <PresetBar presets={presets} onLoad={loadPreset} onSave={savePresetNow} onDelete={deletePresetNow}
+            onExport={exportPresetsNow} onImport={importPresetsNow} />
           <FilterBuilder form={form} setForm={setForm} tagKeys={tagKeys} films={films}
             onApply={() => applyForm(form)} />
           <ExportPanel filter={filter} count={plays.length} />

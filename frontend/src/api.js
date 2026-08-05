@@ -51,3 +51,10 @@ export const savePreset = (body) =>
   }).then(j)
 export const deletePreset = (name) =>
   fetch('/api/presets/' + encodeURIComponent(name), { method: 'DELETE' }).then(j)
+export const exportPresets = () => fetch('/api/presets/export').then(j)
+export const importPresets = (presets, overwrite = true) =>
+  fetch('/api/presets/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ presets, overwrite }),
+  }).then(j)

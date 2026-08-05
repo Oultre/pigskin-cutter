@@ -114,6 +114,21 @@ def test_presets_crud(client):
     assert client.delete("/api/presets/nope").status_code == 404
 
 
+def test_presets_export_import(client):
+    client.post("/api/presets", json={"name": "runs", "filter": {"where": ["play_type=Run"]}})
+    exported = client.get("/api/presets/export").json()
+    assert exported["presets"][0]["name"] == "runs"
+
+    # import into a fresh notion via the same client (upsert) + a new one
+    res = client.post("/api/presets/import", json={
+        "presets": [{"name": "passes", "filter": {"where": ["play_type=Pass"]}}],
+        "overwrite": True,
+    }).json()
+    assert res["imported"] == 1
+    names = {p["name"] for p in client.get("/api/presets").json()}
+    assert names == {"runs", "passes"}
+
+
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")
 def test_stream_missing_film_is_404(client):
     r = client.get("/api/film/1/stream")

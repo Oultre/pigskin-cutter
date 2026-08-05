@@ -73,3 +73,48 @@ def delete_preset(conn, name: str) -> int:
     """Delete a preset by name; returns rows removed. Caller commits."""
     cur = conn.execute("DELETE FROM presets WHERE name = ?", (name,))
     return cur.rowcount
+
+
+# -- import / export (share preset packs between libraries and people) ------
+
+
+def normalize_pack(data) -> list[dict]:
+    """Accept either a bare list of presets or a ``{"presets": [...]}`` wrapper."""
+    if isinstance(data, dict) and "presets" in data:
+        data = data["presets"]
+    if not isinstance(data, list):
+        raise CutupError('Preset file must be a JSON list, or {"presets": [...]}.')
+    return data
+
+
+def import_presets(conn, items, *, overwrite: bool = True) -> tuple[int, int]:
+    """Upsert a pack of presets. Returns (imported, skipped). Caller commits.
+
+    ``overwrite=False`` leaves an existing same-named preset untouched (counted
+    as skipped) rather than replacing it.
+    """
+    items = normalize_pack(items)
+    imported = skipped = 0
+    for it in items:
+        name = (it.get("name") or "").strip()
+        if not name:
+            skipped += 1
+            continue
+        exists = conn.execute("SELECT 1 FROM presets WHERE name = ?", (name,)).fetchone()
+        if exists and not overwrite:
+            skipped += 1
+            continue
+        save_preset(conn, name, it.get("filter", {}), it.get("output", {}))
+        imported += 1
+    return imported, skipped
+
+
+def export_presets(conn, names: list[str] | None = None) -> list[dict]:
+    """Return presets (all, or a named subset) in an importable pack shape."""
+    everything = list_presets(conn)
+    if names:
+        wanted = set(names)
+        everything = [p for p in everything if p["name"] in wanted]
+    # Drop DB ids so the pack is portable between libraries.
+    return [{"name": p["name"], "filter": p["filter"], "output": p["output"]}
+            for p in everything]

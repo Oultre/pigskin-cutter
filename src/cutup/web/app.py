@@ -49,6 +49,11 @@ class PresetBody(BaseModel):
     output: dict = {}
 
 
+class PresetImport(BaseModel):
+    presets: list[dict] = []
+    overwrite: bool = True
+
+
 class ExportRequest(BaseModel):
     out: str
     where: list[str] = []
@@ -220,6 +225,19 @@ def create_app(library_root: Path) -> FastAPI:
         if not removed:
             raise HTTPException(status_code=404, detail="No such preset.")
         return {"deleted": name}
+
+    @app.get("/api/presets/export")
+    def export_presets(lib: Library = Depends(get_library)):
+        return {"presets": presets_mod.export_presets(lib.conn)}
+
+    @app.post("/api/presets/import")
+    def import_presets(body: PresetImport, lib: Library = Depends(get_library)):
+        imported, skipped = presets_mod.import_presets(
+            lib.conn, body.presets, overwrite=body.overwrite
+        )
+        lib.conn.commit()
+        return {"imported": imported, "skipped": skipped,
+                "presets": presets_mod.list_presets(lib.conn)}
 
     # -- video stream (Range-capable, for the scrubber) --------------------
 
