@@ -54,6 +54,13 @@ def test_short_garbage_run_does_not_poison_the_map():
     assert cm.video_time_for(1, 884) == pytest.approx(156)   # 890-884=6 -> v 156
 
 
+def test_empty_map_has_no_quarters():
+    # a film with no readable game clock -> no samples -> empty map (align refuses)
+    cm = ClockMap.from_samples([])
+    assert cm.quarters == []
+    assert cm.video_time_for(1, 500) is None
+
+
 def test_json_roundtrip():
     cm = _map()
     cm2 = ClockMap.from_json(cm.to_json())

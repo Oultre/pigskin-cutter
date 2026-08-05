@@ -1299,6 +1299,12 @@ def align(
     lib = Library.open(library)
     try:
         cm = ClockMap.from_json(json.loads(Path(clockmap).read_text(encoding="utf-8")))
+        if not cm.quarters:
+            raise CutupError(
+                "This clock map is empty — no game clock or quarter was read from the film.\n"
+                "Automatic alignment needs a visible game-clock/quarter display in the picture. "
+                "If this film doesn't have one, mark the plays by hand with the tag pass instead."
+            )
         rows = lib.conn.execute(
             "SELECT id, play_no FROM plays WHERE film_id = ? AND source = 'pbp' "
             "ORDER BY play_no", (film,)
@@ -1407,6 +1413,11 @@ def ocr_scan(
         pc_path.write_text(json.dumps(playclock), encoding="utf-8")
         console.print(f"\n[green]scanned[/green] {stats['frames_read']} frames, "
                       f"{stats['clock_samples']} clock samples, quarters {cm.quarters}.")
+        if stats["clock_samples"] == 0 or not cm.quarters:
+            console.print(
+                "[yellow]warning:[/yellow] no game clock/quarter could be read. This film may "
+                "not have a visible clock display — automatic alignment won't work on it. "
+                "Tag its plays by hand with the tag pass instead.")
         console.print(f"clock map -> {out}   play-clock series -> {pc_path}")
     finally:
         lib.close()
