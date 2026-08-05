@@ -28,7 +28,7 @@ from . import (
 )
 from .config import Config
 from .errors import CutupError
-from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, probe as probe_mod
+from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, pbp as pbp_mod, probe as probe_mod
 from .ingest.profiles import ImportProfile, suggest_profile
 from .library import Library
 from .models import PLAY_SOURCES, SOURCE_TYPES
@@ -52,12 +52,14 @@ profile_app = typer.Typer(no_args_is_help=True, help="Save and inspect column-ma
 import_app.add_typer(profile_app, name="profile")
 clips_app = typer.Typer(no_args_is_help=True, help="Import pre-cut Hudl clip folders.")
 preset_app = typer.Typer(no_args_is_help=True, help="Save and reuse filter presets.")
+pbp_app = typer.Typer(no_args_is_help=True, help="Ingest published play-by-play.")
 app.add_typer(film_app, name="film")
 app.add_typer(play_app, name="play")
 app.add_typer(config_app, name="config")
 app.add_typer(import_app, name="import")
 app.add_typer(clips_app, name="clips")
 app.add_typer(preset_app, name="preset")
+app.add_typer(pbp_app, name="pbp")
 
 # Shared option definition so every command resolves the library the same way.
 LibraryOpt = typer.Option(
@@ -1038,6 +1040,66 @@ def preset_import(
         imported, skipped = presets_mod.import_presets(lib.conn, data, overwrite=overwrite)
         lib.conn.commit()
         console.print(f"[green]imported[/green] {imported}, skipped {skipped}")
+    finally:
+        lib.close()
+
+
+# -- pbp -------------------------------------------------------------------
+
+
+@pbp_app.command("import")
+def pbp_import(
+    source: str = typer.Argument(..., help="Box-score URL, or a saved .html file."),
+    film: int = typer.Option(..., "--film", help="Film id to attach the plays to."),
+    refetch: bool = typer.Option(False, "--refetch", help="Ignore the cache and fetch again."),
+    confidence: float = typer.Option(1.0, "--confidence"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Parse and preview; write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Fetch (once, cached) and parse published play-by-play into pbp plays.
+
+    Supplies possession, yard line, result, and play type. Plays land with no cut
+    times yet — alignment (Phase 7) places them on the video timeline.
+    """
+    lib = Library.open(library)
+    try:
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (film,)).fetchone():
+            raise CutupError(f"No film with id {film}. See `cutup film ls`.")
+
+        html = pbp_mod.fetch(source, lib.root / "cache", refetch=refetch)
+        parsed = pbp_mod.parse(html)
+
+        console.print(f"[bold]{parsed.count}[/bold] plays parsed"
+                      f"  teams: {', '.join(parsed.teams) or '?'}")
+        from collections import Counter
+        split = Counter(p["tags"].get("possession") for p in parsed.plays)
+        for team, n in split.items():
+            console.print(f"  {team}: {n} plays")
+        for w in parsed.warnings:
+            console.print(f"  [yellow]note:[/yellow] {w}")
+
+        if dry_run:
+            table = Table(show_header=True, header_style="bold")
+            for c in ("no", "qtr", "poss", "dn", "dist", "spot", "type", "result", "gain"):
+                table.add_column(c)
+            for p in parsed.plays[:20]:
+                t = p["tags"]
+                table.add_row(
+                    str(p["play_no"]), t.get("quarter", "-"),
+                    (t.get("possession", "-") or "-")[:14],
+                    t.get("down", "-"), t.get("distance", "-"),
+                    f"{t.get('yard_side', '')}{t.get('yard_line', '')}",
+                    t.get("play_type", "-"), t.get("result", "-"), t.get("gain", "-"),
+                )
+            console.print(table)
+            if parsed.count > 20:
+                console.print(f"  ... and {parsed.count - 20} more")
+            console.print(f"[yellow]dry-run:[/yellow] {parsed.count} plays parsed, nothing written.")
+            return
+
+        pbp_mod.to_plays(lib.conn, film, parsed, confidence)
+        lib.conn.commit()
+        console.print(f"[green]imported[/green] {parsed.count} pbp plays into film {film}")
     finally:
         lib.close()
 

@@ -267,6 +267,19 @@ costs you alignment precision on one play, not a wrong tag.
 - Older seasons may use a different stats provider or page layout. Build the parser against
   the current format and check the oldest season early.
 
+**Reality check (rev 8, Phase 6 built against a real page).** minesathletics.com is a
+**Sidearm Sports** site; each game's box score embeds the play-by-play as **StatCrew
+text-format** rows (e.g. `1st and 10 at CSM25 No Huddle-Shotgun Walker,Landon rush middle for
+4 yards gain ...`). No separate JSON API — the PBP is in the box-score HTML. The parser
+(`ingest/pbp.py`, verified against `tests/fixtures/pbp/chadron-state-2025-boxscore.html`,
+162 plays) reads possession from `"<team> drive start at MM:SS"` lines, quarter from
+`"Start of Nth quarter"`, and down/distance/spot/play-type/result/gain/formation from each
+play line. **Coverage (§9 item 1):** the full 2025 season has box scores with PBP for every
+game, home and away. **Important gap for §7:** this narrative view carries a game clock only
+at **drive starts**, not per play — so alignment cannot look up each play's clock directly.
+Phase 7 will interpolate within a drive from the drive-start clock plus play order, and lean
+on the OCR down-and-distance cross-check to correct drift.
+
 **Design the whole thing as proposals you confirm in a grid**, with confidence scores and
 outliers flagged, never as silent truth. Confirming 65 pre-filled rows takes two minutes;
 typing them takes twenty.
@@ -568,7 +581,9 @@ broadcast archive. Worth knowing that's where the money goes.
 
 1. **Coverage check** — do all 3–4 seasons in your archive have published play-by-play,
    including away games? Spot-check the oldest season first; that's where a format change or
-   a gap is most likely.
+   a gap is most likely. *(Partly answered: the full 2025 season on minesathletics.com has
+   PBP for every game, home and away — StatCrew text format, see §2C.4 rev-8. The oldest
+   archive seasons still need a spot-check for a format change.)*
 2. **Breakdown columns** — the Highland Hudl breakdown definitions and the OC/DC Excel
    files. With those, the importer and filter vocabulary match how your coordinators
    actually name things instead of a generic guess. *(Partly answered: a real export is in

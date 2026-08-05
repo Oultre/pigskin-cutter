@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS plays (
     play_no    INTEGER,
     t_start    REAL,                    -- NULL until the play is timed (clip map / tag pass)
     t_end      REAL,                    -- a charted-but-untimed play is valid; just not yet cuttable
-    source     TEXT NOT NULL,           -- hudl | tagged | detected | ocr
+    source     TEXT NOT NULL,           -- hudl | tagged | detected | ocr | pbp
     confidence REAL NOT NULL DEFAULT 1.0
 );
 

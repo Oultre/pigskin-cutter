@@ -8,6 +8,7 @@ render step is exercised regardless.
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -185,6 +186,26 @@ def test_new_source_types_accepted(tmp_path):
     assert res.exit_code == 0, res.output
     res = runner.invoke(app, ["film", "add", str(film), "--source-type", "nope", "-L", str(lib)])
     assert res.exit_code != 0
+
+
+def test_pbp_import_from_file(tmp_path):
+    lib = _init(tmp_path)
+    fixture = Path(__file__).parent / "fixtures" / "pbp" / "chadron-state-2025-boxscore.html"
+    if not fixture.exists():
+        pytest.skip("PBP fixture not present")
+    runner.invoke(app, ["film", "stub", "mines-csc", "--source-type", "broadcast", "-L", str(lib)])
+
+    res = runner.invoke(app, ["pbp", "import", str(fixture), "--film", "1", "--dry-run", "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    assert "plays parsed" in res.output
+    assert "Chadron St." in res.output
+
+    res = runner.invoke(app, ["pbp", "import", str(fixture), "--film", "1", "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    # imported as pbp plays with possession, filterable
+    res = runner.invoke(app, ["query", "--where", "possession=Chadron St.", "--source", "pbp", "-L", str(lib)])
+    assert res.exit_code == 0
+    assert "plays matched" in res.output
 
 
 @requires_ffmpeg

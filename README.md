@@ -14,11 +14,25 @@ No accounts, no server, no sync. Everything runs locally against files on disk.
 
 ## Status
 
-**Phases 1–4 are built.** Phase 1: index a film, filter plays, export individual clips,
+**Phases 1–6 are built.** Phase 1: index a film, filter plays, export individual clips,
 with `--dry-run` on every write path. Phase 2: the Hudl breakdown importer with reusable
 column-mapping profiles. Phase 3: pre-cut Hudl clips end to end — match a folder of clips to
 breakdown rows, reconcile the drift, and export by whole-file copy. Phase 4: a local web UI
-(FastAPI + React) over the same engine. OCR and PBP ingest are later phases (`docs/PLAN.md` §6).
+(FastAPI + React) over the same engine, incl. a keyboard/gamepad **tag pass** (Phase 5).
+Phase 6: **play-by-play ingest** — fetch (cached) and parse published athletics-site PBP into
+possession/down/distance/result/play-type. OCR + alignment (7) and batch/packaging/reels are
+the remaining phases (`docs/PLAN.md` §6).
+
+```bash
+cutup film stub mines-vs-csc --source-type broadcast
+cutup pbp import "https://minesathletics.com/.../boxscore/25444" --film 1 --dry-run
+cutup pbp import "https://minesathletics.com/.../boxscore/25444" --film 1
+cutup query --where "possession=Chadron St." --where "down=3" --source pbp
+```
+
+PBP plays land with **no cut times yet** (possession, yard line, result, play type only);
+Phase 7 aligns them onto the video timeline. Pages are fetched once and cached to
+`<library>/cache/pbp/`; a saved `.html` file works as the source too.
 
 ## Web UI
 
