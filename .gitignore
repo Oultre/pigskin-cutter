@@ -1,0 +1,50 @@
+# --- video: never commit raw film -------------------------------------------
+# Game film runs into the hundreds of GB. It lives on disk, not in git history.
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.m4v
+*.ts
+*.wmv
+*.webm
+
+# --- generated output -------------------------------------------------------
+/output/
+/clips/
+/cache/
+*.sqlite
+*.sqlite3
+*.db
+
+# --- scraped pages: cached locally, not committed ---------------------------
+/cache/pbp/
+
+# --- python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# --- node / frontend --------------------------------------------------------
+node_modules/
+frontend/dist/
+.vite/
+
+# --- os / editor ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- secrets ----------------------------------------------------------------
+.env
+.env.*
+!.env.example
