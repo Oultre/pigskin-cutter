@@ -76,6 +76,16 @@ copy, rename, and organize.
 **Risk:** off-by-one drift when the breakdown has rows the download skipped (penalties,
 no-plays). Needs a reconciliation screen showing unmatched rows on both sides before commit.
 
+**Reality check (rev 7, from the first real fixture).** The sample export dropped in
+`tests/fixtures/hudl/PlaylistData_2026-07-22.xlsx` is a Hudl *PlaylistData* export and
+contains a **single column, `PLAY #`** (values 1–149) — no down/distance/formation/time
+columns at all. So an export can be this sparse, and the importer must treat a
+play-number-only file as a first-class case (it maps straight onto §2A's clip↔row join).
+Two consequences baked into the Phase 2 build: (1) unmapped columns are never dropped —
+they import as tags with a slugified key, so nothing is silently lost; (2) the shipped
+default Hudl profile's guesses for the rich chart fields are **unverified** until a fuller
+export (from the breakdown grid, not the playlist) is run through it. See §9 item 2.
+
 ### 2B. Hudl full game file
 Continuous film, fixed camera, constant frame rate, no cuts. Scene detection is useless
 here; the tag pass is fast and reliable. ~10 min per game.
@@ -561,7 +571,10 @@ broadcast archive. Worth knowing that's where the money goes.
    a gap is most likely.
 2. **Breakdown columns** — the Highland Hudl breakdown definitions and the OC/DC Excel
    files. With those, the importer and filter vocabulary match how your coordinators
-   actually name things instead of a generic guess.
+   actually name things instead of a generic guess. *(Partly answered: a real export is in
+   `tests/fixtures/hudl/`, but it is a PlaylistData playlist with only a `PLAY #` column —
+   see §2A rev-7 note. A full breakdown-grid export is still needed to verify the default
+   profile's mapping of down/distance/formation/etc.)*
 3. **~10 native-resolution frames** spanning all 3–4 seasons, ideally including one from
    each season opener — confirms whether the RMAC Network graphics package holds steady or
    needs multiple templates.

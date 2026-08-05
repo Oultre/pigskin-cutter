@@ -40,8 +40,8 @@ class Play:
     id: int
     film_id: int
     play_no: int | None
-    t_start: float
-    t_end: float
+    t_start: float | None
+    t_end: float | None
     source: str
     confidence: float
 

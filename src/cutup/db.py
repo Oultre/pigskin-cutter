@@ -38,8 +38,8 @@ CREATE TABLE IF NOT EXISTS plays (
     id         INTEGER PRIMARY KEY,
     film_id    INTEGER NOT NULL REFERENCES films(id) ON DELETE CASCADE,
     play_no    INTEGER,
-    t_start    REAL NOT NULL,
-    t_end      REAL NOT NULL,
+    t_start    REAL,                    -- NULL until the play is timed (clip map / tag pass)
+    t_end      REAL,                    -- a charted-but-untimed play is valid; just not yet cuttable
     source     TEXT NOT NULL,           -- hudl | tagged | detected | ocr
     confidence REAL NOT NULL DEFAULT 1.0
 );
@@ -103,3 +103,27 @@ def initialize(db_path: Path) -> sqlite3.Connection:
 
 def schema_version(conn: sqlite3.Connection) -> int:
     return int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+
+def insert_play(conn: sqlite3.Connection, film_id: int, play_no, t_start,
+                t_end, source: str, confidence: float, tags: dict) -> int:
+    """Insert one play plus its tags. Does not commit — the caller batches that.
+
+    Shared by the manual ``play add`` path and the Hudl importer so a play always
+    lands the same way. Empty tag values are skipped (nothing silently stored as
+    a blank tag); each tag inherits the play's source and confidence.
+    """
+    cur = conn.execute(
+        "INSERT INTO plays (film_id, play_no, t_start, t_end, source, confidence) "
+        "VALUES (?,?,?,?,?,?)",
+        (film_id, play_no, t_start, t_end, source, confidence),
+    )
+    play_id = cur.lastrowid
+    for key, value in tags.items():
+        if value is None or str(value).strip() == "":
+            continue
+        conn.execute(
+            "INSERT INTO tags (play_id, key, value, source, confidence) VALUES (?,?,?,?,?)",
+            (play_id, key, str(value), source, confidence),
+        )
+    return play_id

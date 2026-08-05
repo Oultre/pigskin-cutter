@@ -11,9 +11,9 @@ No accounts, no server, no sync. Everything runs locally against files on disk.
 
 ## Status
 
-**Phase 1 (CLI engine) is built:** index a film, filter plays, export individual clips,
-with `--dry-run` on every write path. The Hudl importer, OCR, and web UI are later phases
-(see `docs/PLAN.md` §6).
+**Phases 1–2 are built.** Phase 1: index a film, filter plays, export individual clips,
+with `--dry-run` on every write path. Phase 2: the Hudl breakdown importer with reusable
+column-mapping profiles. OCR, PBP ingest, and the web UI are later phases (`docs/PLAN.md` §6).
 
 ## Install (development)
 
@@ -37,6 +37,24 @@ cutup query --where "down=3" --where "distance>=6"
 cutup export --out ./cuts --where "formation=trips" --dry-run   # prints the plan, writes nothing
 cutup export --out ./cuts --where "formation=trips"             # cuts the clips
 ```
+
+### Importing a Hudl breakdown
+
+The importer maps whatever columns your export has onto the canonical play/tag fields via a
+reusable **mapping profile**. Columns you don't map are imported as tags under a slugified
+key, so nothing is dropped.
+
+```bash
+cutup film stub highland-g7 --source-type hudl_game   # register a film even if the video isn't on hand yet
+cutup import inspect breakdown.xlsx                    # show columns and how they'd map
+cutup import run breakdown.xlsx --film 1 --dry-run     # preview plays/tags, write nothing
+cutup import run breakdown.xlsx --film 1               # import for real
+cutup import profile save hudl-default --from breakdown.xlsx   # persist an editable profile
+```
+
+A breakdown with no `PLAY #` column is numbered by row order; one with no start/end columns
+imports as an untimed chart (it filters and charts, and gets its cut times later from a clip
+map or a tag pass). Both cases are reported, never silent.
 
 A **library is a folder** containing `library.sqlite`, `config.json`, and your film; film
 paths are stored relative to it so the same library opens on macOS and Windows. Point at a

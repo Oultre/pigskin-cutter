@@ -22,10 +22,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, ffmpeg as ffmpeg_mod, filters as filters_mod
+from . import __version__, db, ffmpeg as ffmpeg_mod, filters as filters_mod
 from .config import Config
 from .errors import CutupError
-from .ingest import probe as probe_mod
+from .ingest import hudl_csv as hudl_mod, probe as probe_mod
+from .ingest.profiles import ImportProfile, suggest_profile
 from .library import Library
 from .models import PLAY_SOURCES, SOURCE_TYPES
 from .paths import resolve_film_path, store_film_path
@@ -43,9 +44,13 @@ app = typer.Typer(
 film_app = typer.Typer(no_args_is_help=True, help="Register and inspect films.")
 play_app = typer.Typer(no_args_is_help=True, help="Add and list plays.")
 config_app = typer.Typer(no_args_is_help=True, help="Read and set library config.")
+import_app = typer.Typer(no_args_is_help=True, help="Import Hudl breakdowns via mapping profiles.")
+profile_app = typer.Typer(no_args_is_help=True, help="Save and inspect column-mapping profiles.")
+import_app.add_typer(profile_app, name="profile")
 app.add_typer(film_app, name="film")
 app.add_typer(play_app, name="play")
 app.add_typer(config_app, name="config")
+app.add_typer(import_app, name="import")
 
 # Shared option definition so every command resolves the library the same way.
 LibraryOpt = typer.Option(
@@ -194,6 +199,36 @@ def film_add(
         lib.close()
 
 
+@film_app.command("stub")
+def film_stub(
+    name: str = typer.Argument(..., help="Placeholder path/name for the film (the file need not exist yet)."),
+    source_type: str = typer.Option("hudl_game", "--source-type",
+                                    help=f"One of: {', '.join(SOURCE_TYPES)}."),
+    label: Optional[str] = typer.Option(None, "--label"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Register a film with no file yet, so a breakdown can be imported against it.
+
+    Useful when you have the chart before the video. Probe fields stay empty; add
+    the real file later with `cutup film add`.
+    """
+    if source_type not in SOURCE_TYPES:
+        raise CutupError(f"--source-type must be one of {', '.join(SOURCE_TYPES)}.")
+    lib = Library.open(library)
+    try:
+        stored = name.replace("\\", "/")
+        cur = lib.conn.execute(
+            "INSERT INTO films (path, label, source_type) VALUES (?,?,?)",
+            (stored, label or name, source_type),
+        )
+        lib.conn.commit()
+        console.print(f"[green]added film stub[/green] id={cur.lastrowid} ({source_type})")
+    except Exception as exc:  # UNIQUE(path) etc.
+        raise CutupError(f"Could not add film stub {name!r}: {exc}") from exc
+    finally:
+        lib.close()
+
+
 @film_app.command("ls")
 def film_ls(library: Optional[Path] = LibraryOpt):
     """List registered films."""
@@ -241,18 +276,8 @@ def film_rm(
 
 def _insert_play(lib: Library, film_id: int, play_no, t_start, t_end,
                  source: str, confidence: float, tags: dict) -> int:
-    cur = lib.conn.execute(
-        "INSERT INTO plays (film_id, play_no, t_start, t_end, source, confidence) "
-        "VALUES (?,?,?,?,?,?)",
-        (film_id, play_no, t_start, t_end, source, confidence),
-    )
-    play_id = cur.lastrowid
-    for key, value in tags.items():
-        lib.conn.execute(
-            "INSERT INTO tags (play_id, key, value, source, confidence) VALUES (?,?,?,?,?)",
-            (play_id, key, str(value), source, confidence),
-        )
-    return play_id
+    return db.insert_play(lib.conn, film_id, play_no, t_start, t_end,
+                          source, confidence, tags)
 
 
 @play_app.command("add")
@@ -375,7 +400,7 @@ def play_ls(
         tag_str = ", ".join(f"{k}={v}" for k, v in tags.items())
         table.add_row(
             str(r["id"]), str(r["film_id"]), str(r["play_no"]) if r["play_no"] is not None else "-",
-            format_time(r["t_start"]), format_time(r["t_end"]),
+            _fmt_t(r["t_start"]), _fmt_t(r["t_end"]),
             r["source"], f"{r['confidence']:.2f}", tag_str,
         )
     console.print(table)
@@ -419,7 +444,7 @@ def query(
             table.add_row(
                 str(r["id"]), r["film_label"] or str(r["film_id"]),
                 str(r["play_no"]) if r["play_no"] is not None else "-",
-                format_time(r["t_start"]), format_time(r["t_end"]),
+                _fmt_t(r["t_start"]), _fmt_t(r["t_end"]),
                 r["source"], f"{r['confidence']:.2f}",
                 ", ".join(f"{k}={v}" for k, v in tags.items()),
             )
@@ -447,9 +472,20 @@ def export(
     """Cut individual clips for every play matching the filter."""
     lib = Library.open(library)
     try:
-        rows = _selection(lib, where, source, min_confidence, confirmed_only, film)
-        if not rows:
+        matched = _selection(lib, where, source, min_confidence, confirmed_only, film)
+        if not matched:
             console.print("No plays matched - nothing to export.")
+            return
+
+        # A charted-but-untimed play cannot be cut yet; skip it with a note
+        # rather than crashing or silently dropping it.
+        rows = [r for r in matched if r["t_start"] is not None and r["t_end"] is not None]
+        skipped = len(matched) - len(rows)
+        if skipped:
+            console.print(f"[yellow]note:[/yellow] {skipped} matched play(s) have no cut "
+                          "times and were skipped (need a clip map or tag pass).")
+        if not rows:
+            console.print("No timed plays to export.")
             return
 
         ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
@@ -501,6 +537,162 @@ def export(
         lib.close()
 
 
+# -- import ----------------------------------------------------------------
+
+
+def _load_profile(lib: Library, profile: Optional[str], headers: list[str]) -> ImportProfile:
+    """Load a named/saved profile, or synthesize one from the synonym table."""
+    if profile:
+        return ImportProfile.load(lib.root, profile)
+    saved = ImportProfile.list_names(lib.root)
+    if "hudl-default" in saved:
+        return ImportProfile.load(lib.root, "hudl-default")
+    return suggest_profile(headers, name="auto", description="synonym-suggested")
+
+
+def _print_mapping(headers: list[str], prof: ImportProfile) -> None:
+    table = Table(show_header=True, header_style="bold")
+    for col in ("source column", "maps to"):
+        table.add_column(col)
+    for h in headers:
+        if h in ("", None):
+            continue
+        m = prof.resolve(h)
+        target = m.target if m.target != "tag" else f"tag: {m.key}"
+        table.add_row(h, target)
+    console.print(table)
+
+
+@import_app.command("inspect")
+def import_inspect(
+    file: Path = typer.Argument(..., help="Breakdown .xlsx/.csv."),
+    profile: Optional[str] = typer.Option(None, "--profile", help="Saved profile to preview."),
+    header_row: int = typer.Option(1, "--header-row"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Show a file's columns and how they would map — change nothing."""
+    lib = Library.open(library)
+    try:
+        headers, data = hudl_mod.read_table(file, header_row)
+        prof = _load_profile(lib, profile, headers)
+        console.print(f"[bold]{Path(file).name}[/bold]: {len(headers)} columns, {len(data)} data rows")
+        console.print(f"profile: [bold]{prof.name}[/bold] "
+                      f"({'verified' if prof.verified else 'UNVERIFIED'})")
+        _print_mapping(headers, prof)
+    finally:
+        lib.close()
+
+
+@import_app.command("run")
+def import_run(
+    file: Path = typer.Argument(..., help="Breakdown .xlsx/.csv."),
+    film: int = typer.Option(..., "--film", help="Film id to attach plays to (see `film ls`/`film stub`)."),
+    profile: Optional[str] = typer.Option(None, "--profile"),
+    header_row: int = typer.Option(1, "--header-row"),
+    source: str = typer.Option("hudl", "--source", help=f"One of: {', '.join(PLAY_SOURCES)}."),
+    confidence: float = typer.Option(1.0, "--confidence"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the result, write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Import a Hudl breakdown into plays/tags using a mapping profile."""
+    if source not in PLAY_SOURCES:
+        raise CutupError(f"--source must be one of {', '.join(PLAY_SOURCES)}.")
+    lib = Library.open(library)
+    try:
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (film,)).fetchone():
+            raise CutupError(f"No film with id {film}. See `cutup film ls` or `cutup film stub`.")
+
+        headers, data = hudl_mod.read_table(file, header_row)
+        prof = _load_profile(lib, profile, headers)
+        result = hudl_mod.prepare_import(headers, data, prof)
+
+        console.print(f"[bold]{Path(file).name}[/bold] -> film {film} "
+                      f"via profile [bold]{prof.name}[/bold]")
+        console.print(f"  {result.count} plays, "
+                      f"tags: {', '.join(result.tag_columns) or '(none)'}")
+        for w in result.warnings:
+            console.print(f"  [yellow]note:[/yellow] {w}")
+
+        if dry_run:
+            preview = Table(show_header=True, header_style="bold")
+            for c in ("no", "start", "end", "tags"):
+                preview.add_column(c)
+            for p in result.plays[:15]:
+                preview.add_row(
+                    str(p["play_no"]),
+                    format_time(p["t_start"]) if p["t_start"] is not None else "-",
+                    format_time(p["t_end"]) if p["t_end"] is not None else "-",
+                    ", ".join(f"{k}={v}" for k, v in p["tags"].items()),
+                )
+            console.print(preview)
+            if result.count > 15:
+                console.print(f"  ... and {result.count - 15} more")
+            console.print(f"[yellow]dry-run:[/yellow] {result.count} plays planned, nothing written.")
+            return
+
+        hudl_mod.import_breakdown(lib.conn, film, result, source, confidence)
+        lib.conn.commit()
+        console.print(f"[green]imported[/green] {result.count} plays into film {film}")
+    finally:
+        lib.close()
+
+
+@profile_app.command("save")
+def profile_save(
+    name: str = typer.Argument(..., help="Profile name to write."),
+    from_file: Path = typer.Option(..., "--from", help="Breakdown file to derive columns from."),
+    header_row: int = typer.Option(1, "--header-row"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Generate an editable mapping profile from a file's headers and save it."""
+    lib = Library.open(library)
+    try:
+        headers, _ = hudl_mod.read_table(from_file, header_row)
+        prof = suggest_profile(headers, name=name,
+                               description=f"suggested from {Path(from_file).name}")
+        prof.header_row = header_row
+        path = prof.save(lib.root)
+        console.print(f"[green]saved profile[/green] {name} -> {path}")
+        console.print("Review and edit the JSON, then use it with `--profile " + name + "`.")
+        _print_mapping(headers, prof)
+    finally:
+        lib.close()
+
+
+@profile_app.command("ls")
+def profile_ls(library: Optional[Path] = LibraryOpt):
+    """List saved mapping profiles."""
+    lib = Library.open(library)
+    names = ImportProfile.list_names(lib.root)
+    if not names:
+        console.print("No saved profiles. Create one with `cutup import profile save`.")
+    for n in names:
+        prof = ImportProfile.load(lib.root, n)
+        console.print(f"{n}  ({'verified' if prof.verified else 'unverified'}) "
+                      f"- {prof.description or ''}")
+    lib.close()
+
+
+@profile_app.command("show")
+def profile_show(
+    name: str = typer.Argument(...),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Print a saved profile's mapping."""
+    lib = Library.open(library)
+    prof = ImportProfile.load(lib.root, name)
+    console.print(f"[bold]{prof.name}[/bold] "
+                  f"({'verified' if prof.verified else 'unverified'}) "
+                  f"header_row={prof.header_row} unmapped={prof.unmapped}")
+    table = Table(show_header=True, header_style="bold")
+    for col in ("source column", "maps to"):
+        table.add_column(col)
+    for h, m in prof.columns.items():
+        table.add_row(h, m.target if m.target != "tag" else f"tag: {m.key}")
+    console.print(table)
+    lib.close()
+
+
 # -- helpers ---------------------------------------------------------------
 
 
@@ -515,6 +707,10 @@ def _parse_tag_pairs(pairs: List[str]) -> dict:
             raise CutupError(f"--tag has an empty key: {p!r}.")
         tags[key] = value.strip()
     return tags
+
+
+def _fmt_t(value) -> str:
+    return format_time(value) if value is not None else "-"
 
 
 def _tags_for_play(lib: Library, play_id: int) -> dict:
