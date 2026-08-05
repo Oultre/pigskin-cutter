@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS films (
     id          INTEGER PRIMARY KEY,
     path        TEXT NOT NULL,          -- relative to library root, forward slashes
     label       TEXT,
-    source_type TEXT NOT NULL,          -- hudl_clip | hudl_game | broadcast
+    source_type TEXT NOT NULL,          -- hudl_clip | hudl_game | broadcast | all22 | drone
     fps         REAL,
     duration    REAL,
     codec       TEXT,

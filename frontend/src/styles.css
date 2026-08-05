@@ -79,5 +79,7 @@ td.lowconf { color: var(--warn); }
 .export .result { margin-top: 0.5rem; font-size: 0.82rem; }
 .export .result ul { margin: 0.3rem 0 0; padding-left: 1rem; color: var(--muted); }
 
+.hint { color: var(--warn); font-size: 0.75rem; margin: 0.1rem 0 0.4rem; }
+
 .error { color: #ff6b6b; font-size: 0.82rem; margin-top: 0.4rem; }
 .error.banner { padding: 0.4rem 1rem; background: #2a1a1a; margin: 0; }

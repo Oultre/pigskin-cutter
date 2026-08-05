@@ -588,3 +588,38 @@ broadcast archive. Worth knowing that's where the money goes.
    question in §2C.3.
 5. **Source resolution and container** of the archive files, and how they were captured
    (direct download vs. screen recording) — determines interlacing and VFR handling.
+
+---
+
+## 10. If this ever goes commercial (documented, not planned)
+
+The app is deliberately **local-only, unsigned, and free among friends** (CLAUDE.md, §3.6).
+This section records what a paid version would require, so the choice is informed later — it
+is **not** on the build plan, and no licensing/activation code exists.
+
+**The idea raised:** ship a free tier that burns *our* watermark into clips, and sell a
+license that removes it or lets the user swap in their own logo.
+
+**Honest assessment — this is the weakest lever for this architecture:**
+- **Local + open source defeats the gate.** The source is handed to users on a GPL ffmpeg
+  build; a license check in local open code is trivially edited out. The model only has
+  teeth if the app becomes **closed-source and code-signed** — a different distribution
+  story entirely.
+- **Output watermarks are easy to strip.** Even a legitimate export re-encodes away with one
+  ffmpeg command, so the stamp doesn't durably protect the clips.
+- **It fights clips-first.** Burning a logo forces a re-encode of every clip (§1.5), throwing
+  away the stream-copy speed that makes the tool pleasant.
+
+**What a commercial version would actually take:**
+- Closed-source packaging, and an **LGPL ffmpeg** build (the bundled static builds are
+  GPL-3; distributing a closed app around one is not clean — §8).
+- **Code signing** (~$99/yr Apple, ~$200–400/yr Windows OV/EV — §3) so installers aren't
+  flagged; the current unsigned right-click-Open story doesn't scale past friends.
+- An **activation / license mechanism**, which reintroduces the accounts/licensing surface
+  the project explicitly excludes.
+- Stronger levers than a removable watermark: a paid app license/activation, or hosted
+  convenience — not the output stamp.
+
+**Kept open without building:** the render path isolates the re-encode branch, so a branding
+step slots in cleanly (see the self-branding watermark in §5 / Phase 10). That is a genuine
+free-tier user feature (a coach's own logo) and is independent of any licensing decision.

@@ -65,6 +65,10 @@ class ExportRequest(BaseModel):
     post: Optional[float] = None
     accurate: bool = False
     encoder: Optional[str] = None
+    logo: Optional[str] = None
+    logo_position: Optional[str] = None
+    logo_scale: Optional[float] = None
+    no_logo: bool = False
     dry_run: bool = True
 
 
@@ -93,7 +97,7 @@ def _serialize_play(conn, row) -> dict:
 
 
 def create_app(library_root: Path) -> FastAPI:
-    app = FastAPI(title="gridiron-cutup", docs_url="/api/docs")
+    app = FastAPI(title="Pigskin Cutter", docs_url="/api/docs")
     app.state.library_root = Path(library_root)
 
     def get_library():
@@ -270,8 +274,12 @@ def create_app(library_root: Path) -> FastAPI:
             return {"count": 0, "skipped": skipped, "clips": []}
 
         ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        watermark = render_mod.resolve_watermark(
+            lib.config, lib.root, logo=req.logo, position=req.logo_position,
+            scale=req.logo_scale, no_logo=req.no_logo,
+        )
         encoder = req.encoder or lib.config.encoder
-        if req.accurate and encoder == "auto":
+        if (req.accurate or watermark is not None) and encoder == "auto":
             encoder = ffmpeg_mod.probe_encoders(ffmpeg).best("auto")
         tags_by_play = {r["id"]: _tags(lib.conn, r["id"]) for r in rows}
         clips = render_mod.plan_clips(
@@ -279,7 +287,7 @@ def create_app(library_root: Path) -> FastAPI:
             out_dir=Path(req.out),
             pre_roll=req.pre if req.pre is not None else lib.config.pre_roll,
             post_roll=req.post if req.post is not None else lib.config.post_roll,
-            accurate=req.accurate, encoder=encoder,
+            accurate=req.accurate, encoder=encoder, watermark=watermark,
             output_template=lib.config.output_template, resolve_film=resolve_film_path,
         )
         manifest = render_mod.manifest_rows(clips)
@@ -304,7 +312,7 @@ def create_app(library_root: Path) -> FastAPI:
         @app.get("/", response_class=HTMLResponse)
         def index():
             return (
-                "<h1>gridiron-cutup</h1>"
+                "<h1>Pigskin Cutter</h1>"
                 "<p>API is running. See <a href='/api/docs'>/api/docs</a>. "
                 "The front end has not been built into <code>web/static/</code> yet.</p>"
             )

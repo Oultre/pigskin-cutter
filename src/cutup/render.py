@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .errors import CutupError
 from .timecode import format_time, seconds_arg
 
 
@@ -28,6 +29,53 @@ def _row_get(row, key, default=None):
         return row[key]
     except (KeyError, IndexError):
         return default
+
+
+# overlay x:y expressions per position, with a 12px margin (W/H = main, w/h = logo)
+_WM_POSITIONS = {
+    "bottom-right": "W-w-12:H-h-12",
+    "bottom-left": "12:H-h-12",
+    "top-right": "W-w-12:12",
+    "top-left": "12:12",
+    "center": "(W-w)/2:(H-h)/2",
+}
+
+
+@dataclass
+class WatermarkSpec:
+    logo: Path                       # absolute path to the logo image
+    position: str = "bottom-right"
+    scale: float = 0.12              # logo width as a fraction of the video width
+
+    def overlay_xy(self) -> str:
+        return _WM_POSITIONS.get(self.position, _WM_POSITIONS["bottom-right"])
+
+
+def resolve_watermark(config, library_root, *, logo=None, position=None,
+                      scale=None, no_logo=False, logo_base=None):
+    """Build a WatermarkSpec from an explicit logo or the library config, or None.
+
+    An explicit ``logo`` resolves against ``logo_base`` (the CLI passes the cwd);
+    a logo set in config resolves against the library root, so it travels with
+    the library. Shared by the CLI and the web layer.
+    """
+    if no_logo:
+        return None
+    logo_path = logo or config.watermark_logo
+    if not logo_path:
+        return None
+    p = Path(logo_path)
+    if not p.is_absolute():
+        base = Path(logo_base) if (logo and logo_base) else Path(library_root)
+        p = base / p
+    p = p.resolve()
+    if not p.exists():
+        raise CutupError(f"Logo image not found: {p}")
+    return WatermarkSpec(
+        logo=p,
+        position=position or config.watermark_position,
+        scale=scale if scale is not None else config.watermark_scale,
+    )
 
 
 @dataclass
@@ -74,9 +122,30 @@ def _render_filename(template: str, play_no: int | None, film_label: str,
 
 
 def build_argv(ffmpeg: str, film_abs: Path, t_in: float, duration: float,
-               out_path: Path, *, accurate: bool, encoder: str) -> list[str]:
+               out_path: Path, *, accurate: bool, encoder: str,
+               watermark: "WatermarkSpec | None" = None) -> list[str]:
     """Construct the exact ffmpeg command line for one clip."""
     common = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+
+    if watermark is not None:
+        # Burn in the logo. This always re-encodes (overlay can't stream-copy).
+        # Fast seek before -i keeps it quick; the logo is the second input.
+        return [
+            *common,
+            "-ss", seconds_arg(t_in),
+            "-i", str(film_abs),
+            "-i", str(watermark.logo),
+            "-t", seconds_arg(duration),
+            "-filter_complex",
+            # scale2ref sizes the logo to a fraction of the main video width;
+            # h=-1 keeps the logo's own aspect ratio.
+            f"[1:v][0:v]scale2ref=w=main_w*{watermark.scale}:h=-1[wm][bg];"
+            f"[bg][wm]overlay={watermark.overlay_xy()}",
+            "-c:v", encoder,
+            "-c:a", "aac",
+            str(out_path),
+        ]
+
     if not accurate:
         # Fast seek before -i, stream copy. -avoid_negative_ts fixes timestamps
         # when the cut lands between keyframes.
@@ -114,6 +183,7 @@ def plan_clips(
     encoder: str,
     output_template: str,
     resolve_film,
+    watermark: "WatermarkSpec | None" = None,
 ) -> list[ClipSpec]:
     """Turn selected play rows into a concrete, disk-free clip plan.
 
@@ -148,7 +218,8 @@ def plan_clips(
             used_names[name] = 1
         out_path = out_dir / name
 
-        if is_precut:
+        # Pre-cut clip: whole-file copy, unless a watermark forces a re-encode.
+        if is_precut and watermark is None:
             t_out = row["t_end"] or 0.0
             clips.append(ClipSpec(
                 play_id=row["id"], play_no=play_no, film_label=film_label,
@@ -157,17 +228,22 @@ def plan_clips(
             ))
             continue
 
-        t_in = max((row["t_start"] or 0.0) - pre_roll, 0.0)
-        t_out = (row["t_end"] or 0.0) + post_roll
+        if is_precut:
+            t_in, t_out = 0.0, (row["t_end"] or 0.0)   # full clip, no padding
+        else:
+            t_in = max((row["t_start"] or 0.0) - pre_roll, 0.0)
+            t_out = (row["t_end"] or 0.0) + post_roll
+
         argv = build_argv(
             ffmpeg, film_abs, t_in, max(t_out - t_in, 0.0), out_path,
-            accurate=accurate, encoder=encoder,
+            accurate=accurate, encoder=encoder, watermark=watermark,
         )
+        mode = "watermark" if watermark is not None else ("encode" if accurate else "copy")
         clips.append(ClipSpec(
             play_id=row["id"], play_no=play_no, film_label=film_label,
             film_abs=film_abs, out_path=out_path, t_in=t_in, t_out=t_out,
-            mode="encode" if accurate else "copy",
-            encoder=encoder if accurate else None,
+            mode=mode,
+            encoder=encoder if (watermark is not None or accurate) else None,
             argv=argv, tags=tags,
         ))
     return clips

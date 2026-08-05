@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from cutup.render import build_argv, execute, manifest_rows, plan_clips
+from cutup.render import build_argv, execute, manifest_rows, plan_clips, WatermarkSpec
 
 
 def _row(pid, no, ts, te, path="game.mp4", label="Game 1", source_type="broadcast"):
@@ -79,6 +79,32 @@ def test_precut_clip_plans_as_whole_file_copy(tmp_path):
     results = execute(clips)
     assert results[0].ok
     assert (tmp_path / "out" / "007.mov").read_bytes() == b"video-bytes"
+
+
+def test_watermark_argv_overlays_and_reencodes():
+    wm = WatermarkSpec(logo=Path("logo.png"), position="top-left", scale=0.2)
+    argv = build_argv("ffmpeg", Path("g.mp4"), 10.0, 5.0, Path("out.mp4"),
+                      accurate=False, encoder="libx264", watermark=wm)
+    joined = " ".join(argv)
+    assert "-filter_complex" in argv
+    assert "overlay=12:12" in joined                 # top-left position
+    assert "scale2ref=w=main_w*0.2:h=-1" in joined   # 20% of video width, aspect kept
+    assert "copy" not in argv                        # not a stream copy
+    assert "libx264" in argv
+
+
+def test_watermark_forces_precut_reencode():
+    # a hudl_clip would normally be a file copy; with a watermark it re-encodes
+    row = _row(1, 7, 0.0, 3.0, path="c.mp4", source_type="hudl_clip")
+    wm = WatermarkSpec(logo=Path("logo.png"))
+    clips = plan_clips(
+        [row], {}, ffmpeg="ffmpeg", library_root=Path("/lib"), out_dir=Path("/out"),
+        pre_roll=3.0, post_roll=2.0, accurate=False, encoder="libx264",
+        output_template="{play_no:03d}.mp4", resolve_film=_resolve, watermark=wm,
+    )
+    assert clips[0].mode == "watermark"
+    assert clips[0].argv != []                  # not a copy
+    assert clips[0].t_in == 0.0                 # whole clip, no padding
 
 
 def test_manifest_rows_shape():

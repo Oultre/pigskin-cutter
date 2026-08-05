@@ -153,6 +153,41 @@ def test_precut_clips_import_reconcile_and_export(tmp_path):
 
 
 @requires_ffmpeg
+def test_export_with_watermark_reencodes(tmp_path):
+    lib = _init(tmp_path)
+    film = lib / "game.mp4"
+    _make_testsrc(film, seconds=6)
+    logo = lib / "logo.png"
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "color=c=red:s=48x24:d=1", "-frames:v", "1", str(logo)],
+        check=True,
+    )
+    runner.invoke(app, ["film", "add", str(film), "--source-type", "all22", "-L", str(lib)])
+    pfile = lib / "p.json"
+    pfile.write_text('[{"play_no":1,"t_start":1.0,"t_end":3.0,"formation":"trips"}]')
+    runner.invoke(app, ["play", "import", str(pfile), "--film", "1", "-L", str(lib)])
+
+    out = tmp_path / "branded"
+    res = runner.invoke(app, ["export", "--out", str(out), "--logo", str(logo),
+                              "--logo-position", "top-left", "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    clips = list(out.glob("*.mp4"))
+    assert len(clips) == 1 and clips[0].stat().st_size > 0
+
+
+@requires_ffmpeg
+def test_new_source_types_accepted(tmp_path):
+    lib = _init(tmp_path)
+    film = lib / "drone.mp4"
+    _make_testsrc(film, seconds=2)
+    res = runner.invoke(app, ["film", "add", str(film), "--source-type", "drone", "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    res = runner.invoke(app, ["film", "add", str(film), "--source-type", "nope", "-L", str(lib)])
+    assert res.exit_code != 0
+
+
+@requires_ffmpeg
 def test_film_add_refuses_outside_library(tmp_path):
     lib = _init(tmp_path)
     outside = tmp_path / "outside.mp4"

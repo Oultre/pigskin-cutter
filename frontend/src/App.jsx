@@ -272,14 +272,17 @@ function Preview({ play, onChange }) {
 
 function ExportPanel({ filter, count }) {
   const [out, setOut] = useState('')
+  const [logo, setLogo] = useState('')
+  const [pos, setPos] = useState('bottom-right')
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const run = async (dry) => {
     setError(''); setBusy(true); setResult(null)
+    const branding = logo ? { logo, logo_position: pos } : {}
     try {
-      setResult(await postExport({ ...filter, out, dry_run: dry }))
+      setResult(await postExport({ ...filter, out, dry_run: dry, ...branding }))
     } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
 
@@ -287,6 +290,17 @@ function ExportPanel({ filter, count }) {
     <div className="panel export">
       <h2>Export ({count} plays)</h2>
       <input placeholder="output folder" value={out} onChange={(e) => setOut(e.target.value)} />
+      <div className="row">
+        <input placeholder="logo image (optional)" value={logo} onChange={(e) => setLogo(e.target.value)} style={{ flex: 2 }} />
+        <select value={pos} onChange={(e) => setPos(e.target.value)} disabled={!logo} style={{ flex: 1 }}>
+          <option value="bottom-right">BR</option>
+          <option value="bottom-left">BL</option>
+          <option value="top-right">TR</option>
+          <option value="top-left">TL</option>
+          <option value="center">center</option>
+        </select>
+      </div>
+      {logo && <div className="hint">Branding re-encodes clips (slower than a plain cut).</div>}
       <div className="row">
         <button onClick={() => run(true)} disabled={busy || !out}>Dry run</button>
         <button className="primary" onClick={() => run(false)} disabled={busy || !out}>Cut clips</button>
@@ -378,7 +392,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>gridiron-cutup</h1>
+        <h1>Pigskin Cutter</h1>
         <span className="films">{films.length} film(s), {films.reduce((n, f) => n + (f.plays || 0), 0)} plays</span>
       </header>
       {error && <div className="error banner">{error}</div>}

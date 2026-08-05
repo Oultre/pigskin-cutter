@@ -1,7 +1,10 @@
-# gridiron-cutup
+# Pigskin Cutter
 
 Local-only football film cut-up tool. Takes game film plus play data and produces
 individual play clips, filtered by down, distance, formation, personnel, or result.
+
+> The command-line tool and Python package are named `cutup` (the short binary name);
+> "Pigskin Cutter" is the product name.
 
 No accounts, no server, no sync. Everything runs locally against files on disk.
 

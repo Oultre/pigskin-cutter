@@ -1,3 +1,3 @@
-"""gridiron-cutup: local-only football film cut-up engine."""
+"""Pigskin Cutter: local-only football film cut-up engine (package: cutup)."""
 
 __version__ = "0.1.0"

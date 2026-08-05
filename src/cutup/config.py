@@ -36,6 +36,14 @@ class Config:
     # id), plus any tag key on the play. Example: "{play_no:03d}_{formation}.mp4".
     output_template: str = "{play_no:03d}.mp4"
 
+    # Optional clip branding: a logo/watermark burned into exported clips. Set
+    # here to apply by default; overridable per export. Note this forces a
+    # re-encode (no stream-copy), so branded exports are slower. Path is relative
+    # to the library root so it travels with the library.
+    watermark_logo: str | None = None
+    watermark_position: str = "bottom-right"   # bottom-right|bottom-left|top-right|top-left|center
+    watermark_scale: float = 0.12              # logo width as a fraction of the video width
+
     @classmethod
     def load(cls, library_root: Path) -> "Config":
         path = Path(library_root) / CONFIG_FILENAME

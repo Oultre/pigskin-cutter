@@ -10,7 +10,10 @@ import sqlite3
 from dataclasses import dataclass
 
 # Allowed enumerations, kept here so the CLI and the DB agree on spelling.
-SOURCE_TYPES = ("hudl_clip", "hudl_game", "broadcast")
+# all22 and drone are continuous game film like hudl_game/broadcast (cut on the
+# timecode path); drone (e.g. DJI) is often VFR and wants CFR-forcing on import
+# (Phase 7b). hudl_clip is the only one exported by whole-file copy.
+SOURCE_TYPES = ("hudl_clip", "hudl_game", "broadcast", "all22", "drone")
 PLAY_SOURCES = ("hudl", "tagged", "detected", "ocr")
 
 # Sources that mean "a human put this here", used by --confirmed-only filtering.

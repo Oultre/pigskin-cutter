@@ -466,6 +466,14 @@ def _selection(lib: Library, where, source, min_confidence, confirmed_only, film
     return lib.conn.execute(query, params).fetchall()
 
 
+def _resolve_watermark(lib: Library, logo, position, scale, no_logo):
+    """CLI wrapper: a --logo path is relative to the current directory."""
+    return render_mod.resolve_watermark(
+        lib.config, lib.root, logo=logo, position=position, scale=scale,
+        no_logo=no_logo, logo_base=Path.cwd(),
+    )
+
+
 def _selection_with_preset(lib: Library, preset, where, source, min_confidence,
                            confirmed_only, film):
     """Run a selection, first layering in a saved preset's filter if named.
@@ -529,7 +537,11 @@ def export(
     pre: Optional[float] = typer.Option(None, "--pre", help="Pre-roll seconds (default: config)."),
     post: Optional[float] = typer.Option(None, "--post", help="Post-roll seconds (default: config)."),
     accurate: bool = typer.Option(False, "--accurate", help="Frame-exact re-encode instead of stream copy."),
-    encoder: Optional[str] = typer.Option(None, "--encoder", help="Encoder for --accurate (default: auto)."),
+    encoder: Optional[str] = typer.Option(None, "--encoder", help="Encoder for --accurate/--logo (default: auto)."),
+    logo: Optional[str] = typer.Option(None, "--logo", help="Logo/watermark image to burn in (forces re-encode)."),
+    logo_position: Optional[str] = typer.Option(None, "--logo-position", help="bottom-right|bottom-left|top-right|top-left|center."),
+    logo_scale: Optional[float] = typer.Option(None, "--logo-scale", help="Logo width as a fraction of video width."),
+    no_logo: bool = typer.Option(False, "--no-logo", help="Disable branding even if the library config sets a logo."),
     workers: Optional[int] = typer.Option(None, "--workers"),
     manifest: Optional[Path] = typer.Option(None, "--manifest", help="Also write the manifest as JSON here."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and ffmpeg commands, write nothing."),
@@ -575,8 +587,10 @@ def export(
         pre_roll = pre if pre is not None else lib.config.pre_roll
         post_roll = post if post is not None else lib.config.post_roll
 
+        watermark = _resolve_watermark(lib, logo, logo_position, logo_scale, no_logo)
+
         chosen_encoder = encoder or lib.config.encoder
-        if accurate and (chosen_encoder == "auto"):
+        if (accurate or watermark is not None) and chosen_encoder == "auto":
             chosen_encoder = ffmpeg_mod.probe_encoders(ffmpeg).best("auto")
 
         tags_by_play = {r["id"]: _tags_for_play(lib, r["id"]) for r in rows}
@@ -584,7 +598,7 @@ def export(
             rows, tags_by_play,
             ffmpeg=ffmpeg, library_root=lib.root, out_dir=out,
             pre_roll=pre_roll, post_roll=post_roll,
-            accurate=accurate, encoder=chosen_encoder,
+            accurate=accurate, encoder=chosen_encoder, watermark=watermark,
             output_template=lib.config.output_template,
             resolve_film=resolve_film_path,
         )
@@ -1064,7 +1078,15 @@ def _read_play_file(file: Path) -> list[dict]:
 
 
 def _print_manifest(clips, out: Path, accurate: bool, encoder: str) -> None:
-    mode = f"accurate re-encode ({encoder})" if accurate else "fast stream-copy"
+    modes = {c.mode for c in clips}
+    if "watermark" in modes:
+        mode = f"branded re-encode ({encoder})"
+    elif accurate:
+        mode = f"accurate re-encode ({encoder})"
+    elif modes == {"file"}:
+        mode = "whole-file copy"
+    else:
+        mode = "fast stream-copy"
     console.print(f"[bold]Clip manifest[/bold]  ({len(clips)} clips, mode: {mode}, out: {out})")
     table = Table(show_header=True, header_style="bold")
     for col in ("no", "film", "in", "out", "dur", "mode", "output"):

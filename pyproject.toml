@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "gridiron-cutup"
+name = "pigskin-cutter"
 version = "0.1.0"
-description = "Local-only football film cut-up tool: index film, filter plays, export clips."
+description = "Pigskin Cutter: local-only football film cut-up tool: index film, filter plays, export clips."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-or-later" }
