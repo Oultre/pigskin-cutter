@@ -1,0 +1,43 @@
+// Thin fetch wrappers over the FastAPI backend. Errors from the engine come back
+// as { error } with status 400; surface that message rather than a generic one.
+
+async function j(res) {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || body.detail || res.statusText)
+  }
+  return res.json()
+}
+
+export const getDiagnostics = () => fetch('/api/diagnostics').then(j)
+export const getFilms = () => fetch('/api/films').then(j)
+export const getTagKeys = () => fetch('/api/tag-keys').then(j)
+export const getTagValues = (key) =>
+  fetch('/api/tag-values?key=' + encodeURIComponent(key)).then(j)
+
+export function getPlays({ where = [], film, source, minConfidence, confirmedOnly }) {
+  const q = new URLSearchParams()
+  where.forEach((w) => q.append('where', w))
+  if (film) q.append('film', film)
+  if (source) q.append('source', source)
+  if (minConfidence !== undefined && minConfidence !== '' && minConfidence !== null)
+    q.append('min_confidence', minConfidence)
+  if (confirmedOnly) q.append('confirmed_only', 'true')
+  return fetch('/api/plays?' + q.toString()).then(j)
+}
+
+export const patchPlay = (id, body) =>
+  fetch('/api/plays/' + id, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+
+export const postExport = (body) =>
+  fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+
+export const streamUrl = (filmId) => '/api/film/' + filmId + '/stream'

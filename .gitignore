@@ -39,6 +39,8 @@ build/
 node_modules/
 frontend/dist/
 .vite/
+# built UI (generated from frontend/ by `npm run build`; shipped via PyInstaller)
+/src/cutup/web/static/
 
 # --- os / editor ------------------------------------------------------------
 .DS_Store

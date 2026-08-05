@@ -85,7 +85,11 @@ CREATE INDEX IF NOT EXISTS idx_tags_key ON tags(key);
 
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open a connection with the pragmas this project relies on."""
-    conn = sqlite3.connect(str(db_path))
+    # check_same_thread=False: the web layer opens one connection per request but
+    # FastAPI may resolve the dependency and run the endpoint on different
+    # threadpool threads. Access is still sequential (never concurrent) and each
+    # request has its own connection, so this is safe. The CLI is single-threaded.
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     # Default rollback journal (not WAL): the app is single-writer (lockfile), so
