@@ -28,6 +28,13 @@ export const importPbp = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(j)
+export const startAlign = (body) =>
+  fetch('/api/align', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+export const getJob = (id) => fetch('/api/jobs/' + id).then(j)
 export const getTagKeys = () => fetch('/api/tag-keys').then(j)
 export const getTagValues = (key) =>
   fetch('/api/tag-values?key=' + encodeURIComponent(key)).then(j)

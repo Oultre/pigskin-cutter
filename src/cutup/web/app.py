@@ -13,6 +13,9 @@ Design notes:
 
 from __future__ import annotations
 
+import threading
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -62,6 +65,13 @@ class FilmBody(BaseModel):
 class PresetImport(BaseModel):
     presets: list[dict] = []
     overwrite: bool = True
+
+
+class AlignRequest(BaseModel):
+    film_id: int
+    package: str = "rmac-2024"
+    start: float = 0.0
+    end: Optional[float] = None
 
 
 class PBPImport(BaseModel):
@@ -123,9 +133,87 @@ def _serialize_play(conn, row) -> dict:
     }
 
 
+def _align_job(root: Path, job_id: str, jobs: dict, film_id: int,
+               package: str, start: float, end: float | None) -> None:
+    """Scan the film's score bug, align the PBP plays, write cut times.
+
+    Runs in its own thread with its own Library connection; posts progress into
+    the shared ``jobs`` dict for the UI to poll.
+    """
+    from .. import align as align_mod
+    from ..ocr.scan import load_bundled_glyphs, load_bundled_template, scan_clockmap
+
+    job = jobs[job_id]
+    lib = None
+    try:
+        lib = Library.open(root)
+        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (film_id,)).fetchone()
+        video = resolve_film_path(lib.root, row["path"])
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
+        template = load_bundled_template(package)
+        glyphs = load_bundled_glyphs(package)
+
+        job.update(phase="scanning", message="Reading the score bug…")
+
+        def progress(frames, samples):
+            job.update(frames=frames, samples=samples)
+
+        cm, playclock, stats = scan_clockmap(
+            ffmpeg, ffprobe, video, template, glyphs, start=start, end=end, progress=progress)
+
+        if not cm.quarters:
+            job.update(status="failed", phase="done",
+                       message="No game clock/quarter could be read — this film may not have a "
+                               "visible clock. Tag its plays by hand instead.")
+            return
+
+        job.update(phase="aligning", message="Placing plays on the timeline…")
+        rows = lib.conn.execute(
+            "SELECT id, play_no FROM plays WHERE film_id = ? AND source = 'pbp' ORDER BY play_no",
+            (film_id,)).fetchall()
+        if not rows:
+            job.update(status="failed", phase="done",
+                       message="No play-by-play plays on this film. Import the PBP first.")
+            return
+        plays, id_by_no = [], {}
+        for r in rows:
+            id_by_no[r["play_no"]] = r["id"]
+            t = _tags(lib.conn, r["id"])
+            plays.append(align_mod.AlignPlay(
+                play_no=r["play_no"],
+                quarter=int(t["quarter"]) if t.get("quarter") else None,
+                drive=int(t["drive"]) if t.get("drive") else None,
+                drive_clock=t.get("drive_clock")))
+
+        placements = align_mod.estimate_snaps(cm, plays)
+        align_mod.refine_placements(placements, playclock)
+        cut = align_mod.to_cut_times(placements, lib.config.pre_roll, lib.config.post_roll)
+        method = {p.play_no: p.method for p in placements}
+        for play_no, (ts, te) in cut.items():
+            lib.conn.execute("UPDATE plays SET t_start=?, t_end=?, confidence=? WHERE id=?",
+                             (ts, te, 0.6, id_by_no[play_no]))
+            lib.conn.execute(
+                "INSERT INTO tags (play_id, key, value, source, confidence) "
+                "VALUES (?, 'align', ?, 'detected', 0.6) "
+                "ON CONFLICT(play_id, key) DO UPDATE SET value=excluded.value",
+                (id_by_no[play_no], method.get(play_no, "drive_map")))
+        lib.conn.commit()
+        refined = sum(1 for p in placements if p.method == "refined")
+        job.update(status="done", phase="done", placed=len(cut), refined=refined,
+                   message=f"Aligned {len(cut)} plays ({refined} snap-refined).")
+    except Exception as exc:  # keep the job legible, never crash the server
+        job.update(status="failed", phase="done", message=str(exc))
+    finally:
+        job["finished"] = datetime.now().isoformat(timespec="seconds")
+        if lib is not None:
+            lib.close()
+
+
 def create_app(library_root: Path) -> FastAPI:
     app = FastAPI(title="Pigskin Cutter", docs_url="/api/docs")
     app.state.library_root = Path(library_root)
+    app.state.jobs = {}          # in-process align jobs, by id
 
     def get_library():
         lib = Library.open(app.state.library_root)
@@ -195,6 +283,38 @@ def create_app(library_root: Path) -> FastAPI:
         lib.conn.commit()
         return {"dry_run": False, "imported": parsed.count, "teams": parsed.teams,
                 "possession": split, "warnings": parsed.warnings}
+
+    @app.post("/api/align")
+    def start_align(body: AlignRequest, lib: Library = Depends(get_library)):
+        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (body.film_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No such film.")
+        if not resolve_film_path(lib.root, row["path"]).exists():
+            raise CutupError("Film file not found — is the video in the library folder?")
+        jobs = app.state.jobs
+        if any(j["status"] == "running" for j in jobs.values()):
+            raise HTTPException(status_code=409, detail="An alignment job is already running.")
+        job_id = uuid.uuid4().hex[:8]
+        jobs[job_id] = {"id": job_id, "film_id": body.film_id, "status": "running",
+                        "phase": "starting", "frames": 0, "samples": 0, "placed": 0,
+                        "message": "Starting…", "started": datetime.now().isoformat(timespec="seconds")}
+        threading.Thread(
+            target=_align_job,
+            args=(app.state.library_root, job_id, jobs, body.film_id, body.package, body.start, body.end),
+            daemon=True,
+        ).start()
+        return jobs[job_id]
+
+    @app.get("/api/jobs")
+    def list_jobs():
+        return sorted(app.state.jobs.values(), key=lambda j: j.get("started", ""), reverse=True)
+
+    @app.get("/api/jobs/{job_id}")
+    def get_job(job_id: str):
+        job = app.state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="No such job.")
+        return job
 
     @app.delete("/api/films/{film_id}")
     def remove_film(film_id: int, lib: Library = Depends(get_library)):

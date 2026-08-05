@@ -174,6 +174,20 @@ def test_pbp_import_unknown_film_404(client):
     assert r.status_code == 404
 
 
+def test_align_endpoint_guards(client):
+    assert client.get("/api/jobs").json() == []
+    # unknown film -> 404
+    assert client.post("/api/align", json={"film_id": 999}).status_code == 404
+    # film 1's file (g.mp4) doesn't exist on disk -> legible 400, no job started
+    r = client.post("/api/align", json={"film_id": 1})
+    assert r.status_code == 400
+    assert client.get("/api/jobs").json() == []
+
+
+def test_get_missing_job_404(client):
+    assert client.get("/api/jobs/nope").status_code == 404
+
+
 def test_library_films_lists_unregistered(tmp_path):
     # a library whose folder has an unregistered video file
     root = _library_with_plays(tmp_path)

@@ -3,6 +3,7 @@ import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl,
   getPresets, savePreset, deletePreset, exportPresets, importPresets,
   getSourceTypes, getLibraryFilms, registerFilm, deleteFilm, importPbp,
+  startAlign, getJob,
 } from './api.js'
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
@@ -380,6 +381,64 @@ function PbpImport({ films, onChanged }) {
   )
 }
 
+function AlignPanel({ films, onChanged }) {
+  const [filmId, setFilmId] = useState('')
+  const [job, setJob] = useState(null)
+  const [error, setError] = useState('')
+  const pollRef = useRef(null)
+
+  useEffect(() => () => clearInterval(pollRef.current), [])
+
+  const poll = (id) => {
+    pollRef.current = setInterval(async () => {
+      try {
+        const j = await getJob(id)
+        setJob(j)
+        if (j.status !== 'running') {
+          clearInterval(pollRef.current)
+          if (j.status === 'done') onChanged()
+        }
+      } catch { clearInterval(pollRef.current) }
+    }, 2000)
+  }
+
+  const start = async () => {
+    setError(''); setJob(null)
+    try {
+      const j = await startAlign({ film_id: Number(filmId) })
+      setJob(j); poll(j.id)
+    } catch (e) { setError(e.message) }
+  }
+
+  const running = job && job.status === 'running'
+  return (
+    <div className="film-add">
+      <h2>Auto-align a broadcast game</h2>
+      <p className="hint2" style={{ margin: '0 0 0.5rem' }}>
+        Reads the on-screen game clock and lines the play-by-play up with the video — no tagging.
+        Needs the play-by-play imported first, and a visible clock in the picture. Takes several minutes.
+      </p>
+      <div className="row">
+        <select value={filmId} onChange={(e) => setFilmId(e.target.value)} style={{ flex: 1 }} disabled={running}>
+          <option value="">select film…</option>
+          {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+        </select>
+        <button className="primary" onClick={start} disabled={!filmId || running}>
+          {running ? 'Running…' : 'Auto-align'}
+        </button>
+      </div>
+      {job && (
+        <div className={'result ' + (job.status === 'failed' ? 'error' : '')} style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+          <div><b>{job.phase}</b> — {job.message}</div>
+          {job.status === 'running' && <div>{job.frames} frames read, {job.samples} clock reads</div>}
+          {job.status === 'done' && <div>Placed {job.placed} plays. They're timed now — filter and export them on the Plays tab.</div>}
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+    </div>
+  )
+}
+
 function FilmLibrary({ films, onChanged }) {
   const [available, setAvailable] = useState([])
   const [sourceTypes, setSourceTypes] = useState(Object.keys(SOURCE_LABELS))
@@ -439,6 +498,7 @@ function FilmLibrary({ films, onChanged }) {
       </div>
 
       <PbpImport films={films} onChanged={onChanged} />
+      <AlignPanel films={films} onChanged={onChanged} />
 
       <div className="film-list">
         <h2>Films in library ({films.length})</h2>
