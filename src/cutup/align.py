@@ -111,6 +111,24 @@ def refine_snap(estimate: float, playclock_series, window: float = 6.0,
     return best, True
 
 
+def refine_placements(placements: list[Placement], playclock_series,
+                      window: float = 8.0) -> list[Placement]:
+    """Snap each placed play to the exact play-clock reset near its estimate.
+
+    The clock-map estimate gets each play close; the play clock resetting at the
+    snap (§2C.2) pins the frame. A play with no reset in its window keeps the
+    estimate (method stays ``drive_map``).
+    """
+    for p in placements:
+        if p.video_sec is None:
+            continue
+        refined, ok = refine_snap(p.video_sec, playclock_series, window)
+        if ok:
+            p.video_sec = refined
+            p.method = "refined"
+    return placements
+
+
 def to_cut_times(placements: list[Placement], pre_roll: float, post_roll: float,
                  default_len: float = 7.0) -> dict[int, tuple[float, float]]:
     """Turn placed snaps into (t_start, t_end) per play.

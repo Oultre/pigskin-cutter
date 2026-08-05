@@ -1,6 +1,8 @@
 import pytest
 
-from cutup.align import AlignPlay, estimate_snaps, refine_snap, to_cut_times
+from cutup.align import (
+    AlignPlay, Placement, estimate_snaps, refine_placements, refine_snap, to_cut_times,
+)
 from cutup.ocr.clockmap import ClockMap, ClockSample
 
 
@@ -63,3 +65,22 @@ def test_refine_snap_no_reset_returns_estimate():
     series = [(30, 20), (31, 19), (32, 18)]
     refined, ok = refine_snap(31.0, series)
     assert not ok and refined == pytest.approx(31.0)
+
+
+def test_refine_placements_snaps_estimates_to_resets():
+    placements = [Placement(1, 40.0, "drive_map"), Placement(2, 100.0, "drive_map"),
+                  Placement(3, None, "unplaced")]
+    # play-clock resets (3->40) near each estimate; nothing near play 3
+    series = [(38, 5), (39, 4), (40, 3), (41, 40), (42, 39),
+              (96, 3), (97, 2), (98, 40), (99, 39)]
+    refine_placements(placements, series, window=8)
+    assert placements[0].video_sec == pytest.approx(41) and placements[0].method == "refined"
+    assert placements[1].video_sec == pytest.approx(98) and placements[1].method == "refined"
+    assert placements[2].video_sec is None            # unplaced left alone
+
+
+def test_refine_placements_keeps_estimate_when_no_reset_nearby():
+    placements = [Placement(1, 40.0, "drive_map")]
+    series = [(80, 20), (81, 40)]                       # reset far outside the window
+    refine_placements(placements, series, window=8)
+    assert placements[0].video_sec == pytest.approx(40.0) and placements[0].method == "drive_map"

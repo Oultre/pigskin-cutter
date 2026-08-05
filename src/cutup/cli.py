@@ -1284,6 +1284,7 @@ def batch(
 def align(
     film: int = typer.Option(..., "--film", help="Film id whose pbp plays to place."),
     clockmap: Path = typer.Option(..., "--clockmap", help="Clock-map JSON (video<->game clock; from OCR)."),
+    playclock: Optional[Path] = typer.Option(None, "--playclock", help="Play-clock series JSON for snap refinement (default: the clock-map's .playclock.json)."),
     pre: Optional[float] = typer.Option(None, "--pre", help="Pre-roll seconds (default: config)."),
     post: Optional[float] = typer.Option(None, "--post", help="Post-roll seconds (default: config)."),
     snap_gap: float = typer.Option(30.0, "--snap-gap", help="Fallback seconds between snaps in a drive."),
@@ -1317,6 +1318,15 @@ def align(
             ))
 
         placements = align_mod.estimate_snaps(cm, plays, snap_gap=snap_gap)
+
+        # refine to the exact snap using the play-clock series, if we have one
+        pc_path = playclock or Path(clockmap).with_suffix(".playclock.json")
+        if Path(pc_path).exists():
+            series = [(float(v), c) for v, c in json.loads(Path(pc_path).read_text(encoding="utf-8"))]
+            align_mod.refine_placements(placements, series)
+            n_refined = sum(1 for p in placements if p.method == "refined")
+            console.print(f"  refined {n_refined} snaps from the play-clock series")
+
         cut = align_mod.to_cut_times(
             placements,
             pre if pre is not None else lib.config.pre_roll,
