@@ -12,6 +12,7 @@ import getpass
 import json
 import os
 import socket
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -55,12 +56,53 @@ def read_lock(root: Path) -> dict | None:
         return {"corrupt": True}
 
 
+def _pid_alive(pid: int) -> bool:
+    """Best-effort: is a process with this pid running on the local machine?
+
+    Windows note: ``os.kill(pid, 0)`` *terminates* the target there, so we must
+    not use it. We open the process for a limited-info query instead — that
+    never affects the target and fails once the process is gone.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False  # no such process
+        try:
+            code = wintypes.DWORD()
+            if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return True  # couldn't read exit code; assume alive rather than steal the lock
+        finally:
+            k32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive but not ours to signal
+    return True
+
+
 def lock_is_stale(info: dict, max_age_hours: float = 12.0) -> bool:
     if not info or info.get("corrupt"):
         return True
-    # our own process re-acquiring is never a conflict
-    if info.get("host") == socket.gethostname() and info.get("pid") == os.getpid():
-        return True
+    # On this same machine the pid is authoritative: our own process re-acquiring
+    # is fine, a dead owner is stale (self-heals after a crash/force-close), and a
+    # live owner is a real conflict regardless of age.
+    if info.get("host") == socket.gethostname():
+        pid = info.get("pid")
+        if isinstance(pid, int):
+            if pid == os.getpid():
+                return True
+            return not _pid_alive(pid)
     try:
         age = datetime.now() - datetime.fromisoformat(info["time"])
     except (KeyError, ValueError):
