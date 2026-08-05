@@ -11,11 +11,31 @@ No accounts, no server, no sync. Everything runs locally against files on disk.
 
 ## Status
 
-**Phases 1–3 are built.** Phase 1: index a film, filter plays, export individual clips,
+**Phases 1–4 are built.** Phase 1: index a film, filter plays, export individual clips,
 with `--dry-run` on every write path. Phase 2: the Hudl breakdown importer with reusable
 column-mapping profiles. Phase 3: pre-cut Hudl clips end to end — match a folder of clips to
-breakdown rows, reconcile the drift, and export by whole-file copy. OCR, PBP ingest, and the
-web UI are later phases (`docs/PLAN.md` §6).
+breakdown rows, reconcile the drift, and export by whole-file copy. Phase 4: a local web UI
+(FastAPI + React) over the same engine. OCR and PBP ingest are later phases (`docs/PLAN.md` §6).
+
+## Web UI
+
+```bash
+cutup serve -L ./my-library          # then open http://127.0.0.1:8000
+```
+
+Library view, filter builder, play grid, a Range-streamed preview with per-clip nudge, and a
+dry-run/real export panel — all over the same CLI engine.
+
+The UI is built from `frontend/` (Vite + React) into `src/cutup/web/static/`, which is
+gitignored. Build it once from a clean checkout (needs Node.js):
+
+```bash
+cd frontend && npm install && npm run build
+```
+
+For UI development, run `cutup serve` and `npm run dev` (the dev server proxies `/api` to
+port 8000). Distribution bundles ship the built `static/` inside the PyInstaller artifact, so
+end users never need Node.
 
 ## Install (development)
 
