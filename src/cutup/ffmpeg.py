@@ -12,6 +12,7 @@ encode, and the result is cached **per host** (PLAN §5), not in the library.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import shutil
@@ -128,7 +129,9 @@ def _cache_file(ffmpeg: str) -> Path:
         capture_output=True, text=True, check=False,
     ).stdout.splitlines()
     ver_line = ver[0] if ver else "unknown"
-    tag = str(abs(hash((host, ver_line))) % (10 ** 10))
+    # hashlib, not builtin hash(): the latter is per-process salted, so the cache
+    # filename would change every run and the cache would never hit.
+    tag = hashlib.sha1(f"{host}\0{ver_line}".encode()).hexdigest()[:10]
     return cache_dir() / f"encoders-{host}-{tag}.json"
 
 

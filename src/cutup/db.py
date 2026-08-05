@@ -88,7 +88,9 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    # Default rollback journal (not WAL): the app is single-writer (lockfile), so
+    # WAL's concurrency buys nothing, and its -wal/-shm sidecars would have to be
+    # checkpointed before the Phase 8b checkout model copies library.sqlite.
     return conn
 
 

@@ -16,6 +16,9 @@
 *.sqlite
 *.sqlite3
 *.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 
 # --- scraped pages: cached locally, not committed ---------------------------
 /cache/pbp/
