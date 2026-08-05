@@ -75,6 +75,27 @@ def init(path: Path = typer.Argument(..., help="Folder for the new library.")):
 
 
 @app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address (localhost only by default)."),
+    port: int = typer.Option(8000, "--port"),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Serve the local web UI (FastAPI) over the current library."""
+    try:
+        import uvicorn
+        from .web.app import create_app
+    except ImportError as exc:
+        raise CutupError(
+            "The web UI needs fastapi and uvicorn (`pip install fastapi uvicorn`)."
+        ) from exc
+    root = Library.resolve_root(library)
+    # Fail fast with a legible error if the library is not there.
+    Library.open(library).close()
+    console.print(f"Serving {root} at http://{host}:{port}  (Ctrl+C to stop)")
+    uvicorn.run(create_app(root), host=host, port=port, log_level="warning")
+
+
+@app.command()
 def diagnostics(library: Optional[Path] = LibraryOpt):
     """Dump versions, ffmpeg path, and probed encoders in a pasteable form."""
     console.print(f"[bold]cutup[/bold] {__version__}")
