@@ -14,6 +14,7 @@ from pathlib import Path
 from . import db
 from .config import CONFIG_FILENAME, Config
 from .errors import LibraryError
+from .ingest.profiles import default_hudl_profile
 
 OCR_TEMPLATES_DIRNAME = "ocr_templates"
 
@@ -44,6 +45,7 @@ class Library:
         conn = db.initialize(db_path)
         conn.close()
         Config().save(root)
+        default_hudl_profile().save(root)   # a verified starting profile, ready to edit
         return Library(root)
 
     @staticmethod

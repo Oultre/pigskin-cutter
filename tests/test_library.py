@@ -17,6 +17,15 @@ def test_init_creates_library(tmp_path):
     lib.close()
 
 
+def test_init_ships_verified_default_profile(tmp_path):
+    from cutup.ingest.profiles import ImportProfile
+    Library.init(tmp_path).close()
+    assert "hudl-default" in ImportProfile.list_names(tmp_path)
+    prof = ImportProfile.load(tmp_path, "hudl-default")
+    assert prof.verified is True
+    assert prof.resolve("OFF FORM").key == "off_form"
+
+
 def test_init_refuses_existing(tmp_path):
     Library.init(tmp_path).close()
     with pytest.raises(LibraryError):

@@ -108,6 +108,7 @@ def _predicate_sql(pred: Predicate, min_confidence: float | None) -> tuple[str, 
 def build_query(
     predicates: list[Predicate],
     *,
+    film_id: int | None = None,
     source: str | None = None,
     min_confidence: float | None = None,
     confirmed_only: bool = False,
@@ -122,6 +123,10 @@ def build_query(
 
     clauses: list[str] = []
     params: list = []
+
+    if film_id is not None:
+        clauses.append("plays.film_id = ?")
+        params.append(film_id)
 
     if source is not None:
         clauses.append("plays.source = ?")

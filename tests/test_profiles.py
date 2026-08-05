@@ -1,5 +1,6 @@
 from cutup.ingest.profiles import (
     ImportProfile,
+    default_hudl_profile,
     normalize_header,
     slug,
     suggest_profile,
@@ -44,9 +45,26 @@ def test_real_hudl_headers_map_cleanly():
 
 def test_unmapped_defaults_to_tag_and_ignore_option():
     prof = ImportProfile(name="p", columns={}, unmapped="tag")
-    assert prof.resolve("Weird Col").target == "tag"
+    m = prof.resolve("Weird Col")
+    assert m.target == "tag" and m.key == "weird_col"
     prof.unmapped = "ignore"
     assert prof.resolve("Weird Col").target == "ignore"
+
+
+def test_resolve_falls_back_to_synonyms_not_raw_slug():
+    # An unlisted header still canonicalizes via the synonym table rather than
+    # being slugged: "DIST" -> "distance", not "dist".
+    prof = ImportProfile(name="p", columns={}, unmapped="tag")
+    assert prof.resolve("DIST").key == "distance"
+    assert prof.resolve("Coverage").key == "coverage"
+
+
+def test_default_hudl_profile_is_verified_and_maps_real_columns():
+    prof = default_hudl_profile()
+    assert prof.name == "hudl-default" and prof.verified is True
+    assert prof.resolve("DN").key == "down"
+    assert prof.resolve("GN/LS").key == "gain"
+    assert prof.resolve("PLAY #").target == "play_no"
 
 
 def test_profile_roundtrip(tmp_path):

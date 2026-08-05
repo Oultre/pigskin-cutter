@@ -154,12 +154,17 @@ class ImportProfile:
     # -- lookup ------------------------------------------------------------
 
     def resolve(self, header: str) -> ColumnMap:
-        """What a given source header maps to under this profile."""
+        """What a given source header maps to under this profile.
+
+        An explicit mapping wins. Otherwise a header still gets the synonym-aware
+        guess (so ``DOWN`` -> ``down`` even if the profile only listed ``DN``),
+        and only a truly-unknown header falls through to a slugged tag.
+        """
         if header in self.columns:
             return self.columns[header]
         if self.unmapped == "ignore":
             return ColumnMap(target="ignore")
-        return ColumnMap(target="tag", key=slug(header))
+        return suggest_target(header)
 
 
 def suggest_target(header: str) -> ColumnMap:
@@ -181,3 +186,25 @@ def suggest_profile(headers: list[str], name: str = "suggested",
     return ImportProfile(
         name=name, description=description, verified=False, columns=columns,
     )
+
+
+# The column spellings verified against the real export
+# (tests/fixtures/hudl/PlaylistData_2026-07-22.xlsx), plus the playlist/timecode
+# columns from Hudl's other export shapes. Shipped into every new library so the
+# common case needs no setup and does not report UNVERIFIED.
+_DEFAULT_HUDL_HEADERS = [
+    "PLAY #", "START", "END",
+    "ODK", "DN", "DIST", "YARD LN", "PLAY TYPE", "RESULT", "GN/LS",
+    "OFF FORM", "OFF PLAY", "DEF FRONT", "COVERAGE",
+]
+
+
+def default_hudl_profile() -> ImportProfile:
+    """The shipped, verified ``hudl-default`` mapping profile."""
+    prof = suggest_profile(
+        _DEFAULT_HUDL_HEADERS,
+        name="hudl-default",
+        description="Default Hudl breakdown mapping (verified against a real Highland export).",
+    )
+    prof.verified = True
+    return prof

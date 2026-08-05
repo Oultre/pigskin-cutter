@@ -415,12 +415,9 @@ def play_ls(
 def _selection(lib: Library, where, source, min_confidence, confirmed_only, film):
     predicates = [filters_mod.parse_where(w) for w in (where or [])]
     query, params = filters_mod.build_query(
-        predicates, source=source, min_confidence=min_confidence,
+        predicates, film_id=film, source=source, min_confidence=min_confidence,
         confirmed_only=confirmed_only,
     )
-    if film is not None:
-        query = query.replace("WHERE ", "WHERE plays.film_id = ? AND ", 1)
-        params = [film, *params]
     return lib.conn.execute(query, params).fetchall()
 
 

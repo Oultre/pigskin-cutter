@@ -60,6 +60,18 @@ def test_exists_operator():
     assert set(_run(conn, ["formation exists"])) == {1, 2, 3}
 
 
+def test_film_id_parameter():
+    conn = _memory_db()
+    conn.execute("INSERT INTO films (id, path, source_type) VALUES (2, 'h.mp4', 'broadcast')")
+    conn.execute(
+        "INSERT INTO plays (id, film_id, play_no, t_start, t_end, source, confidence) "
+        "VALUES (99, 2, 1, 0, 1, 'hudl', 1.0)")
+    conn.commit()
+    sql, params = build_query([], film_id=1)
+    ids = [r["id"] for r in conn.execute(sql, params).fetchall()]
+    assert 99 not in ids and set(ids) == {1, 2, 3}
+
+
 def test_source_and_confidence_gates():
     conn = _memory_db()
     assert _run(conn, [], source="ocr") == [2]
