@@ -64,11 +64,14 @@ jobs:
           unzip -o ff.zip -d fftmp
           cp fftmp/*/bin/ffmpeg.exe fftmp/*/bin/ffprobe.exe src/cutup/bin/win32/
 
-      # 3. build the one-file app
-      - name: Install & build
-        run: |
-          python -m pip install -e . pyinstaller
-          pyinstaller pigskin-cutter.spec --noconfirm
+      # 3. build the one-file app.
+      #    pip install runs at the repo root (that's where pyproject.toml is);
+      #    only the pyinstaller build runs inside packaging/ next to the spec.
+      - name: Install package + PyInstaller
+        run: python -m pip install -e . pyinstaller
+
+      - name: Build one-file app
+        run: pyinstaller pigskin-cutter.spec --noconfirm
         working-directory: packaging
 
       - name: Rename artifact
