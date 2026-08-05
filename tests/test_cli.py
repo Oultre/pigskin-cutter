@@ -209,6 +209,17 @@ def test_pbp_import_from_file(tmp_path):
 
 
 @requires_ffmpeg
+def test_film_add_relative_path(tmp_path, monkeypatch):
+    # regression: a cwd-relative path must not be double-resolved against the library
+    lib = _init(tmp_path)
+    _make_testsrc(lib / "game.mp4")
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["film", "add", "lib/game.mp4", "-L", "lib"])
+    assert res.exit_code == 0, res.output
+    assert "added film" in res.output
+
+
+@requires_ffmpeg
 def test_film_add_refuses_outside_library(tmp_path):
     lib = _init(tmp_path)
     outside = tmp_path / "outside.mp4"

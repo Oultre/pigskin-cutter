@@ -219,6 +219,11 @@ def film_add(
     if source_type not in SOURCE_TYPES:
         raise CutupError(f"--source-type must be one of {', '.join(SOURCE_TYPES)}.")
 
+    # A CLI path is relative to the current directory; resolve to absolute before
+    # handing to the shared registration code (which treats bare relative paths as
+    # library-relative, the right default for the web picker but not the CLI).
+    path = path.resolve()
+
     lib = Library.open(library)
     try:
         rel = store_film_path(lib.root, path)  # refuses films outside the library
