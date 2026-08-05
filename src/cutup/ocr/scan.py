@@ -140,10 +140,13 @@ def _scan_samples(ffmpeg: str, ffprobe: str, video: Path, template: RegionTempla
 
         gc_txt, gc_conf = read_region(sub(frame, gc), glyphs, whitelist=gc.whitelist)
         qt_txt, _ = read_region(sub(frame, qt), glyphs, whitelist=qt.whitelist)
-        pc_txt, _ = read_region(sub(frame, pc), glyphs, whitelist=pc.whitelist)
 
-        # play-clock series (best effort)
-        playclock.append((video_sec, int(pc_txt) if pc_txt.isdigit() else None))
+        # play clock is optional — some bugs / templates don't have one. Without
+        # it the clock map still builds (game clock + quarter); only per-play snap
+        # refinement is skipped, and the estimates + padding carry the export.
+        if pc is not None:
+            pc_txt, _ = read_region(sub(frame, pc), glyphs, whitelist=pc.whitelist)
+            playclock.append((video_sec, int(pc_txt) if pc_txt.isdigit() else None))
 
         # a valid clock sample needs a clean MM:SS, a quarter digit, and confidence
         if gc_conf >= conf_floor and qt_txt[:1] in "1234" and _is_clock(gc_txt):

@@ -84,3 +84,12 @@ def test_refine_placements_keeps_estimate_when_no_reset_nearby():
     series = [(80, 20), (81, 40)]                       # reset far outside the window
     refine_placements(placements, series, window=8)
     assert placements[0].video_sec == pytest.approx(40.0) and placements[0].method == "drive_map"
+
+
+def test_refine_placements_no_playclock_is_a_noop():
+    # a film with no play clock: series is all-None (or empty) -> placements unchanged
+    placements = [Placement(1, 40.0, "drive_map")]
+    refine_placements(placements, [(38, None), (39, None), (40, None)])
+    assert placements[0].video_sec == pytest.approx(40.0) and placements[0].method == "drive_map"
+    refine_placements(placements, [])
+    assert placements[0].video_sec == pytest.approx(40.0)
