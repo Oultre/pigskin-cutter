@@ -19,6 +19,7 @@
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal
+library.lock
 
 # --- scraped pages: cached locally, not committed ---------------------------
 /cache/pbp/

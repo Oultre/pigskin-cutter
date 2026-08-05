@@ -8,7 +8,11 @@ one that phase expects, so nothing has to move later.
 
 from __future__ import annotations
 
+import getpass
+import json
 import os
+import socket
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import db
@@ -17,6 +21,74 @@ from .errors import LibraryError
 from .ingest.profiles import default_hudl_profile
 
 OCR_TEMPLATES_DIRNAME = "ocr_templates"
+LOCK_FILENAME = "library.lock"
+
+
+# -- lockfile: one writer at a time (PLAN §3.5) ----------------------------
+#
+# A session lock — acquired by the long-running writer (`cutup serve`), not on
+# every short CLI open — so two machines don't write a shared library at once.
+# The copy-to-local-temp checkout for network shares is a further refinement and
+# is not built yet; the lock is the "one writer" safety.
+
+
+def lock_path(root: Path) -> Path:
+    return Path(root) / LOCK_FILENAME
+
+
+def _lock_info() -> dict:
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
+    return {"host": socket.gethostname(), "user": user, "pid": os.getpid(),
+            "time": datetime.now().isoformat(timespec="seconds")}
+
+
+def read_lock(root: Path) -> dict | None:
+    p = lock_path(root)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"corrupt": True}
+
+
+def lock_is_stale(info: dict, max_age_hours: float = 12.0) -> bool:
+    if not info or info.get("corrupt"):
+        return True
+    # our own process re-acquiring is never a conflict
+    if info.get("host") == socket.gethostname() and info.get("pid") == os.getpid():
+        return True
+    try:
+        age = datetime.now() - datetime.fromisoformat(info["time"])
+    except (KeyError, ValueError):
+        return True
+    return age > timedelta(hours=max_age_hours)
+
+
+def acquire_lock(root: Path, *, force: bool = False) -> dict:
+    existing = read_lock(root)
+    if existing and not force and not lock_is_stale(existing):
+        raise LibraryError(
+            f"Library is already open by {existing.get('user','?')}@"
+            f"{existing.get('host','?')} since {existing.get('time','?')} "
+            f"(pid {existing.get('pid','?')}).\nClose it there first, or, if that is "
+            f"stale, break it with `cutup unlock` / re-run with --force."
+        )
+    info = _lock_info()
+    lock_path(root).write_text(json.dumps(info), encoding="utf-8")
+    return info
+
+
+def release_lock(root: Path) -> None:
+    p = lock_path(root)
+    try:
+        if p.exists():
+            p.unlink()
+    except OSError:
+        pass
 
 
 class Library:

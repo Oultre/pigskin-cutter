@@ -14,7 +14,9 @@ from __future__ import annotations
 import csv
 import json
 import platform
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -24,7 +26,7 @@ from rich.table import Table
 
 from . import (
     __version__, align as align_mod, db, ffmpeg as ffmpeg_mod, films as films_mod,
-    filters as filters_mod, presets as presets_mod,
+    filters as filters_mod, presets as presets_mod, qa as qa_mod,
 )
 from .ocr.clockmap import ClockMap
 from .ocr.templates import RegionTemplate
@@ -89,6 +91,7 @@ def init(path: Path = typer.Argument(..., help="Folder for the new library.")):
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address (localhost only by default)."),
     port: int = typer.Option(8000, "--port"),
+    force: bool = typer.Option(False, "--force", help="Break a stale library lock and open anyway."),
     library: Optional[Path] = LibraryOpt,
 ):
     """Serve the local web UI (FastAPI) over the current library."""
@@ -103,8 +106,15 @@ def serve(
     # Fail fast with a legible error if the library is not there.
     Library.open(library).close()
     _ensure_port_free(host, port)
+    # The server is the long-running writer session: hold the lock for its life
+    # so a second machine can't open the same shared library at once (PLAN §3.5).
+    from .library import acquire_lock, release_lock
+    acquire_lock(root, force=force)
     console.print(f"Serving {root} at http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(create_app(root), host=host, port=port, log_level="warning")
+    try:
+        uvicorn.run(create_app(root), host=host, port=port, log_level="warning")
+    finally:
+        release_lock(root)
 
 
 def _ensure_port_free(host: str, port: int) -> None:
@@ -126,6 +136,40 @@ def _ensure_port_free(host: str, port: int) -> None:
         ) from exc
     finally:
         probe.close()
+
+
+@app.command()
+def status(library: Optional[Path] = LibraryOpt):
+    """Show the library path, contents, and whether it's locked."""
+    from .library import read_lock, lock_is_stale
+    lib = Library.open(library)
+    films = lib.conn.execute("SELECT COUNT(*) c FROM films").fetchone()["c"]
+    plays = lib.conn.execute("SELECT COUNT(*) c FROM plays").fetchone()["c"]
+    console.print(f"[bold]{lib.root}[/bold]")
+    console.print(f"  films: {films}   plays: {plays}")
+    info = read_lock(lib.root)
+    if info is None:
+        console.print("  lock:  [green]open[/green] (not locked)")
+    else:
+        stale = lock_is_stale(info)
+        tag = "[yellow]stale[/yellow]" if stale else "[red]held[/red]"
+        console.print(f"  lock:  {tag} by {info.get('user','?')}@{info.get('host','?')} "
+                      f"since {info.get('time','?')} (pid {info.get('pid','?')})")
+    lib.close()
+
+
+@app.command()
+def unlock(library: Optional[Path] = LibraryOpt):
+    """Remove the library lock (use when a previous session didn't release it)."""
+    from .library import read_lock, release_lock
+    root = Library.resolve_root(library)
+    info = read_lock(root)
+    if info is None:
+        console.print("Not locked.")
+        return
+    release_lock(root)
+    console.print(f"[green]unlocked[/green] (was {info.get('user','?')}@{info.get('host','?')}, "
+                  f"pid {info.get('pid','?')})")
 
 
 @app.command()
@@ -1111,6 +1155,124 @@ def pbp_import(
         pbp_mod.to_plays(lib.conn, film, parsed, confidence)
         lib.conn.commit()
         console.print(f"[green]imported[/green] {parsed.count} pbp plays into film {film}")
+    finally:
+        lib.close()
+
+
+# -- batch + qa ------------------------------------------------------------
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "preset"
+
+
+@app.command()
+def qa(
+    film: int = typer.Option(..., "--film", help="Film id to check."),
+    min_confidence: float = typer.Option(0.8, "--min-confidence", help="Confidence floor."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Run sanity checks over a film's plays and print the exceptions report."""
+    lib = Library.open(library)
+    report = qa_mod.check_film(lib.conn, film, confidence_floor=min_confidence)
+    console.print(f"[bold]QA film {film}[/bold]: {report.stats} findings={report.counts}")
+    for f in report.findings:
+        color = {"error": "red", "warn": "yellow", "info": "dim"}.get(f.severity, "white")
+        console.print(f"  [{color}]{f.severity}[/{color}] {f.category}: {f.message}")
+    lib.close()
+
+
+@app.command()
+def batch(
+    out: Path = typer.Option(..., "--out", help="Output root; each preset gets a subfolder."),
+    preset: Optional[List[str]] = typer.Option(None, "--preset", help="Preset name (repeatable)."),
+    all_presets: bool = typer.Option(False, "--all", help="Run every saved preset."),
+    pre: Optional[float] = typer.Option(None, "--pre"),
+    post: Optional[float] = typer.Option(None, "--post"),
+    accurate: bool = typer.Option(False, "--accurate"),
+    workers: Optional[int] = typer.Option(None, "--workers"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan + QA only; write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Run saved presets in one go, with a per-run QA / exceptions report (§2C.5)."""
+    lib = Library.open(library)
+    try:
+        names = list(preset or [])
+        if all_presets:
+            names = [p["name"] for p in presets_mod.list_presets(lib.conn)]
+        if not names:
+            raise CutupError("Name at least one --preset, or pass --all.")
+
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        watermark = render_mod.resolve_watermark(lib.config, lib.root)
+        encoder = lib.config.encoder
+        if (accurate or watermark is not None) and encoder == "auto":
+            encoder = ffmpeg_mod.probe_encoders(ffmpeg).best("auto")
+        pre_roll = pre if pre is not None else lib.config.pre_roll
+        post_roll = post if post is not None else lib.config.post_roll
+
+        started = datetime.now().isoformat(timespec="seconds")
+        per_preset, films_seen, total_clips, total_fail = [], set(), 0, 0
+
+        for name in names:
+            rows = _selection_with_preset(lib, name, None, None, None, False, None)
+            timed = [r for r in rows if r["t_start"] is not None and r["t_end"] is not None]
+            skipped = len(rows) - len(timed)
+            for r in rows:
+                films_seen.add(r["film_id"])
+            out_dir = Path(out) / _slug(name)
+            clips = render_mod.plan_clips(
+                timed, {r["id"]: _tags_for_play(lib, r["id"]) for r in timed},
+                ffmpeg=ffmpeg, library_root=lib.root, out_dir=out_dir,
+                pre_roll=pre_roll, post_roll=post_roll, accurate=accurate,
+                encoder=encoder, watermark=watermark,
+                output_template=lib.config.output_template, resolve_film=resolve_film_path,
+            )
+            entry = {"preset": name, "matched": len(rows), "clips": len(clips), "skipped": skipped}
+            if not dry_run and clips:
+                results = render_mod.execute(clips, workers=workers)
+                fails = [r for r in results if not r.ok]
+                entry["failed"] = len(fails)
+                total_fail += len(fails)
+            per_preset.append(entry)
+            total_clips += len(clips)
+
+        # QA over every film touched
+        qa_reports = [qa_mod.check_film(lib.conn, fid) for fid in sorted(films_seen)]
+        flagged = sum(len(r.findings) for r in qa_reports)
+
+        table = Table(show_header=True, header_style="bold")
+        for c in ("preset", "matched", "clips", "skipped", "failed"):
+            table.add_column(c)
+        for e in per_preset:
+            table.add_row(e["preset"], str(e["matched"]), str(e["clips"]),
+                          str(e["skipped"]), str(e.get("failed", "-")))
+        console.print(table)
+        console.print(f"[bold]{total_clips}[/bold] clips across {len(names)} preset(s); "
+                      f"{flagged} QA finding(s) across {len(films_seen)} film(s).")
+        for r in qa_reports:
+            for f in r.findings:
+                if f.severity in ("error", "warn"):
+                    console.print(f"  [yellow]{f.severity}[/yellow] film {r.film_id} {f.category}: {f.message}")
+
+        if dry_run:
+            console.print("[yellow]dry-run:[/yellow] nothing written.")
+            return
+
+        # write the report and record the job
+        report = {"started": started, "finished": datetime.now().isoformat(timespec="seconds"),
+                  "presets": per_preset, "qa": [r.to_dict() for r in qa_reports]}
+        Path(out).mkdir(parents=True, exist_ok=True)
+        report_path = Path(out) / "batch-report.json"
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        lib.conn.execute(
+            "INSERT INTO jobs (status, started, finished, log_path) VALUES (?,?,?,?)",
+            ("done" if not total_fail else "done-with-failures", started,
+             report["finished"], str(report_path)),
+        )
+        lib.conn.commit()
+        console.print(f"[green]batch done[/green]: {total_clips} clips, {total_fail} failed. "
+                      f"Report: {report_path}")
     finally:
         lib.close()
 

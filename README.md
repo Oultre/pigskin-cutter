@@ -20,12 +20,19 @@ column-mapping profiles. Phase 3: pre-cut Hudl clips end to end — match a fold
 breakdown rows, reconcile the drift, and export by whole-file copy. Phase 4: a local web UI
 (FastAPI + React) over the same engine, incl. a keyboard/gamepad **tag pass** (Phase 5).
 Phase 6: **play-by-play ingest** — fetch (cached) and parse published athletics-site PBP into
-possession/down/distance/result/play-type. Phase 7 (in progress): the **alignment engine** —
-a video↔game-clock clock map, drive-anchored play placement, and play-clock snap refinement
-(`cutup align`) that puts PBP plays on the video timeline. The **score-bug OCR reader** that
-feeds the clock map is scaffolded (pluggable backend + region-template model) but not built —
-it needs real native-resolution frames (`tests/fixtures/frames/`) and OpenCV. Batch/packaging/
-reels remain (`docs/PLAN.md` §6).
+possession/down/distance/result/play-type. Phase 7 (engine): the **alignment engine** — a
+video↔game-clock clock map, drive-anchored play placement, and play-clock snap refinement
+(`cutup align`). Phase 8: **batch + QA** (`cutup batch` runs saved presets in one go with an
+exceptions report; `cutup qa`) and the **library lockfile** (`cutup status`/`unlock` — one
+writer at a time, §3.5). Still open: the **score-bug OCR reader** that feeds the clock map
+(scaffolded, needs real frames + OpenCV — see `docs/PLAN.md` §9), packaging (Phase 9), and
+reels (Phase 10).
+
+```bash
+cutup batch --out ./cutups --preset "3rd & long" --preset "Explosive (15+ yds)"
+cutup batch --out ./cutups --all          # every saved preset, with a QA report
+cutup qa --film 1                          # play-count / untimed / low-confidence / down-gaps
+```
 
 ```bash
 cutup film stub mines-vs-csc --source-type broadcast

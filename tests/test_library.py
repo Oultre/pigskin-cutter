@@ -58,6 +58,42 @@ def test_store_film_path_is_relative_and_posix(tmp_path):
     assert resolve_film_path(root, stored) == film.resolve()
 
 
+def test_lock_acquire_conflict_and_release(tmp_path):
+    from cutup.library import acquire_lock, read_lock, release_lock
+    root = tmp_path / "lib"
+    Library.init(root).close()
+
+    acquire_lock(root)
+    assert read_lock(root) is not None
+
+    # simulate another machine holding a fresh lock -> a new acquire is refused
+    import json
+    from cutup.library import lock_path
+    lock_path(root).write_text(json.dumps({
+        "host": "other-machine", "user": "matt", "pid": 999999,
+        "time": __import__("datetime").datetime.now().isoformat(),
+    }))
+    with pytest.raises(LibraryError, match="already open"):
+        acquire_lock(root)
+    # force breaks it
+    acquire_lock(root, force=True)
+    release_lock(root)
+    assert read_lock(root) is None
+
+
+def test_lock_stale_is_takeable(tmp_path):
+    import json
+    from datetime import datetime, timedelta
+    from cutup.library import acquire_lock, lock_path
+    root = tmp_path / "lib"
+    Library.init(root).close()
+    lock_path(root).write_text(json.dumps({
+        "host": "old-machine", "user": "matt", "pid": 111,
+        "time": (datetime.now() - timedelta(hours=48)).isoformat(),
+    }))
+    acquire_lock(root)   # stale (48h old) -> no error
+
+
 def test_store_film_path_refuses_outside_library(tmp_path):
     root = tmp_path / "lib"
     root.mkdir()

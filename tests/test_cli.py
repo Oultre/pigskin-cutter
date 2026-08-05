@@ -188,6 +188,36 @@ def test_new_source_types_accepted(tmp_path):
     assert res.exit_code != 0
 
 
+def test_status_and_unlock(tmp_path):
+    lib = _init(tmp_path)
+    res = runner.invoke(app, ["status", "-L", str(lib)])
+    assert res.exit_code == 0 and "not locked" in res.output
+    # simulate a leftover lock, then clear it
+    (lib / "library.lock").write_text('{"host":"h","user":"u","pid":1,"time":"2020-01-01T00:00:00"}')
+    res = runner.invoke(app, ["unlock", "-L", str(lib)])
+    assert res.exit_code == 0 and "unlocked" in res.output
+    assert not (lib / "library.lock").exists()
+
+
+@requires_ffmpeg
+def test_batch_runs_presets_with_report(tmp_path):
+    lib = _init(tmp_path)
+    film = lib / "game.mp4"
+    _make_testsrc(film, seconds=10)
+    runner.invoke(app, ["film", "add", str(film), "-L", str(lib)])
+    plays = [{"play_no": 1, "t_start": 1.0, "t_end": 3.0, "formation": "trips"},
+             {"play_no": 2, "t_start": 4.0, "t_end": 6.0, "formation": "ace"}]
+    (lib / "p.json").write_text(json.dumps(plays))
+    runner.invoke(app, ["play", "import", str(lib / "p.json"), "--film", "1", "-L", str(lib)])
+    runner.invoke(app, ["preset", "save", "trips", "--where", "formation=trips", "-L", str(lib)])
+
+    out = tmp_path / "batch"
+    res = runner.invoke(app, ["batch", "--out", str(out), "--preset", "trips", "-L", str(lib)])
+    assert res.exit_code == 0, res.output
+    assert len(list((out / "trips").glob("*.mp4"))) == 1     # only the trips play
+    assert (out / "batch-report.json").exists()
+
+
 def test_pbp_import_from_file(tmp_path):
     lib = _init(tmp_path)
     fixture = Path(__file__).parent / "fixtures" / "pbp" / "chadron-state-2025-boxscore.html"
