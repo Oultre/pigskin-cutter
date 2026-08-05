@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import platform
 import re
 import sys
@@ -26,7 +27,7 @@ from rich.table import Table
 
 from . import (
     __version__, align as align_mod, db, ffmpeg as ffmpeg_mod, films as films_mod,
-    filters as filters_mod, presets as presets_mod, qa as qa_mod,
+    filters as filters_mod, presets as presets_mod, qa as qa_mod, reel as reel_mod,
 )
 from .ocr.clockmap import ClockMap
 from .ocr.templates import RegionTemplate
@@ -764,6 +765,98 @@ def export(
             err_console.print(f"[red]FAILED[/red] {r.clip.out_path.name}: {r.stderr}")
         if failures:
             raise typer.Exit(code=1)
+    finally:
+        lib.close()
+
+
+# -- reel ------------------------------------------------------------------
+
+
+@app.command()
+def reel(
+    out: Path = typer.Option(..., "--out", help="Output reel file (one stitched video)."),
+    where: Optional[List[str]] = typer.Option(None, "--where", "-w"),
+    source: Optional[str] = typer.Option(None, "--source"),
+    min_confidence: Optional[float] = typer.Option(None, "--min-confidence"),
+    confirmed_only: bool = typer.Option(False, "--confirmed-only"),
+    film: Optional[int] = typer.Option(None, "--film"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    title: Optional[str] = typer.Option(None, "--title", help="Intro slate title card."),
+    label: bool = typer.Option(False, "--label", help="Burn a per-play label (down & distance) onto each clip."),
+    width: int = typer.Option(1280, "--width"),
+    height: int = typer.Option(720, "--height"),
+    fps: int = typer.Option(30, "--fps"),
+    pre: Optional[float] = typer.Option(None, "--pre"),
+    post: Optional[float] = typer.Option(None, "--post"),
+    workers: Optional[int] = typer.Option(None, "--workers"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan, build nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Stitch matching plays into one reel (re-encoded to a common format)."""
+    lib = Library.open(library)
+    try:
+        matched = _selection_with_preset(lib, preset, where, source, min_confidence, confirmed_only, film)
+        rows = [r for r in matched if r["t_start"] is not None and r["t_end"] is not None]
+        skipped = len(matched) - len(rows)
+        if not rows:
+            console.print("No timed plays matched — nothing to stitch.")
+            return
+
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
+        pre_roll = pre if pre is not None else lib.config.pre_roll
+        post_roll = post if post is not None else lib.config.post_roll
+        profile = reel_mod.HouseProfile(width=width, height=height, fps=fps)
+        font = reel_mod.find_font()
+
+        warnings = []
+        if (title or label) and not font:
+            warnings.append("No usable font found — building without the slate/labels.")
+
+        audio_by_film: dict[str, bool] = {}
+        segments = []
+        for r in rows:
+            film_abs = resolve_film_path(lib.root, r["film_path"])
+            key = str(film_abs)
+            if key not in audio_by_film:
+                audio_by_film[key] = probe_mod.has_audio(ffprobe, film_abs)
+            lbl = None
+            if label and font:
+                t = _tags_for_play(lib, r["id"])
+                dd = f"{t.get('down','')}&{t.get('distance','')}".strip("&")
+                lbl = f"#{r['play_no']}  {dd}".strip()
+            segments.append(reel_mod.ReelSegment(
+                play_no=r["play_no"], film_abs=film_abs,
+                t_in=max((r["t_start"]) - pre_roll, 0.0), t_out=r["t_end"] + post_roll,
+                has_audio=audio_by_film[key], label=lbl))
+
+        plan = reel_mod.ReelPlan(segments=segments, profile=profile,
+                                 title=title if font else None, font=font, warnings=warnings)
+
+        console.print(f"[bold]Reel[/bold]: {len(segments)} plays -> {out} "
+                      f"@ {width}x{height} {fps}fps"
+                      + (f", slate '{title}'" if plan.title else "")
+                      + (", labelled" if (label and font) else ""))
+        if skipped:
+            console.print(f"[yellow]note:[/yellow] {skipped} untimed play(s) skipped.")
+        for w in warnings:
+            console.print(f"[yellow]note:[/yellow] {w}")
+
+        if dry_run:
+            total = sum(s.duration for s in segments)
+            console.print(f"[yellow]dry-run:[/yellow] would stitch {len(segments)} plays "
+                          f"(~{total:.0f}s of source) into {out}. Nothing written.")
+            return
+
+        console.print(f"Encoding {len(segments)} segments and stitching…")
+        done = {"n": 0}
+
+        def _progress(i, n):
+            done["n"] = i
+            console.print(f"  normalized {i}/{n}", end="\r")
+
+        reel_mod.build_reel(ffmpeg, plan, out, workers=workers, progress=_progress)
+        console.print(f"\n[green]reel written[/green] -> {out}")
     finally:
         lib.close()
 

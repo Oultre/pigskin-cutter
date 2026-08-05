@@ -93,6 +93,16 @@ def probe_film(ffprobe: str, path: Path) -> FilmProbe:
     )
 
 
+def has_audio(ffprobe: str, path: Path) -> bool:
+    """True if the file has at least one audio stream (reels need a uniform track)."""
+    out = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "a", "-show_entries",
+         "stream=index", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    return bool(out)
+
+
 def quick_checksum(path: Path, sample: int = 1 << 20) -> str:
     """A fast content signature for large films.
 
