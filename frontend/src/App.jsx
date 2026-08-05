@@ -5,6 +5,7 @@ import {
   getSourceTypes, getLibraryFilms, registerFilm, deleteFilm, importPbp,
 } from './api.js'
 import TagPass from './TagPass.jsx'
+import Help from './Help.jsx'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
 const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
@@ -545,6 +546,7 @@ export default function App() {
           <button className={view === 'plays' ? 'active' : ''} onClick={() => setView('plays')}>Plays</button>
           <button className={view === 'films' ? 'active' : ''} onClick={() => setView('films')}>Films</button>
           <button className={view === 'tag' ? 'active' : ''} onClick={() => setView('tag')}>Tag pass</button>
+          <button className={view === 'help' ? 'active' : ''} onClick={() => setView('help')}>Help</button>
         </nav>
         <span className="films">{films.length} film(s), {films.reduce((n, f) => n + (f.plays || 0), 0)} plays</span>
       </header>
@@ -553,6 +555,8 @@ export default function App() {
         <FilmLibrary films={films} onChanged={onFilmsChanged} />
       ) : view === 'tag' ? (
         <TagPass films={films} onTagged={onFilmsChanged} />
+      ) : view === 'help' ? (
+        <Help />
       ) : (
       <div className="cols">
         <aside>

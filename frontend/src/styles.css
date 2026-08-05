@@ -97,6 +97,25 @@ td.lowconf { color: var(--warn); }
 
 .hint { color: var(--warn); font-size: 0.75rem; margin: 0.1rem 0 0.4rem; }
 
+/* coach-facing help */
+.help { overflow-y: auto; padding: 1.5rem 2rem; max-width: 760px; line-height: 1.6; }
+.help h1 { font-size: 1.5rem; margin: 0 0 0.75rem; }
+.help h2 { font-size: 1.1rem; margin: 1.6rem 0 0.5rem; color: var(--fg); border-bottom: 1px solid var(--line); padding-bottom: 0.3rem; }
+.help .lead { font-size: 1rem; color: var(--fg); }
+.help p, .help li, .help dd { color: #cdd3db; }
+.help ul, .help ol { padding-left: 1.4rem; }
+.help li { margin: 0.25rem 0; }
+.help b { color: #fff; font-weight: 600; }
+.help i { color: #aeb7c4; font-style: italic; }
+.help .tip { background: #1a2230; border-left: 3px solid var(--accent); border-radius: 0 4px 4px 0; padding: 0.5rem 0.75rem; font-size: 0.9rem; margin: 0.6rem 0; }
+.help .keys { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.6rem 0; }
+.help .keys > div { font-size: 0.92rem; }
+.help .kbd { display: inline-block; background: #262d38; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0.05rem 0.4rem; font-size: 0.82rem; font-family: ui-monospace, monospace; color: #fff; }
+.help dl { margin: 0.5rem 0; }
+.help dt { font-weight: 600; color: #fff; margin-top: 0.7rem; }
+.help dd { margin: 0.15rem 0 0 0; }
+.help .footer-note { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; }
+
 /* tag pass */
 .tag-view { display: grid; grid-template-columns: 1fr 300px; gap: 1rem; padding: 1rem; min-height: 0; overflow: hidden; }
 .tag-main { display: flex; flex-direction: column; min-width: 0; }
