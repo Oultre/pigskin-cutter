@@ -161,6 +161,28 @@ Specific findings that shape the implementation:
 - Only one frame from one game was tested, at reduced resolution. Native-resolution frames
   should do better; a graphics-package change between seasons would need a new template.
 
+**Rev 9 — feasibility re-run on real native film (`tests/fixtures/video/CSM v CSC 24.mp4`,
+a full 1080p/progressive broadcast).** Findings, all confirmed by eye on extracted frames
+(`tests/fixtures/frames/csc2024_*.png`):
+- **The 2024 bug is a top-center bar, not bottom** — a *different graphics package* from the
+  2025 test, exactly the season-to-season change §2C.1/§8 warned about. It needs its own
+  region template. So multi-template support is required, not optional.
+- **Cleaner than 2025.** Native 1080p, crisp white-on-dark, effectively **one polarity**
+  across the whole bar (no per-field inversion needed here). All fields legible: both scores,
+  quarter (`1ST`), game clock (`10:08`), down-and-distance (`2ND & 10`), play clock (`27`).
+- **The play-clock snap signal is real — verified, not inferred (resolves §9 item 4, kills
+  the §8/§2C.5 load-bearing risk).** Sampling one frame/second across a play: the play clock
+  counts **down (33…15) while the game clock is frozen**, then **resets to 40 the instant the
+  game clock starts running** (10:08 stopped → 10:07 running). So the snap is a **+25 play-
+  clock jump coincident with the clock un-freezing** — two independent signals, and exactly
+  what `align.refine_snap` looks for. Pre/post-snap frames saved as fixtures.
+- **The bar animates width between plays** (a brief expanded state). Region boxes must target
+  the stable pre-snap layout; the sampler should read stable frames (the bug sits still for
+  many seconds pre-snap, so there are plenty).
+- Approx fractional region boxes for this package (of 1920×1080), to refine when building the
+  reader: game_clock ≈ x0.545 w0.075, down_distance ≈ x0.62 w0.085, play_clock ≈ x0.70
+  w0.032, quarter ≈ x0.497 w0.045; bar y ≈ 0.02 h0.045.
+
 ### 2C.1a. Template matching as an alternative to OCR
 
 Worth deciding early, because it affects §3.6 packaging more than it affects accuracy.
@@ -595,17 +617,15 @@ broadcast archive. Worth knowing that's where the money goes.
    real Hudl clip export has been seen yet, so the default filename pattern is a reasonable
    guess; drop a handful of real pre-cut clips in `tests/fixtures/clips/` to confirm it.
 
-3. **~10 native-resolution frames** spanning all 3–4 seasons, ideally including one from
-   each season opener — confirms whether the RMAC Network graphics package holds steady or
-   needs multiple templates. *(Now the active blocker: the Phase 7 alignment engine is built
-   and tested — clock map, drive-anchored placement, play-clock snap refinement, `cutup
-   align` — but the OCR **reader** that produces the clock map and play-clock series can't be
-   built or the feasibility re-checked without these frames. Drop them in
-   `tests/fixtures/frames/`, including a pre-snap/post-snap pair to confirm the play-clock
-   reset in §2C.2.)*
-4. **A few frames captured immediately pre-snap and immediately post-snap** — confirms the
-   play-clock blank/reset behavior that §2C.2 depends on, and answers the possession
-   question in §2C.3.
+3. **~10 native-resolution frames** spanning all 3–4 seasons. *(Partly answered: a full 2024
+   game is in `tests/fixtures/video/`, feasibility re-run in §2C.1 rev-9 — native 1080p bug
+   reads cleanly. Confirmed the graphics package **differs by season** (2024 top bar vs 2025
+   bottom bar), so multi-template support is required. Still want a frame from each remaining
+   season to enumerate the templates needed.)*
+4. **Pre-snap / post-snap frames** — ✅ **answered (§2C.1 rev-9).** The play clock resets
+   40 at the snap as the game clock un-freezes; fixtures saved
+   (`tests/fixtures/frames/csc2024_{presnap,postsnap}.png`). The load-bearing assumption
+   holds. (Possession still comes from PBP §2C.3, not the bug.)
 5. **Source resolution and container** of the archive files, and how they were captured
    (direct download vs. screen recording) — determines interlacing and VFR handling.
 
