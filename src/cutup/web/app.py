@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import (
+    db,
     ffmpeg as ffmpeg_mod,
     films as films_mod,
     filters as filters_mod,
@@ -60,6 +61,16 @@ class FilmBody(BaseModel):
 class PresetImport(BaseModel):
     presets: list[dict] = []
     overwrite: bool = True
+
+
+class PlayCreate(BaseModel):
+    film_id: int
+    t_start: float
+    t_end: float
+    play_no: Optional[int] = None       # auto-assigned (next for the film) if omitted
+    tags: dict[str, str] = {}
+    source: str = "tagged"
+    confidence: float = 1.0
 
 
 class ExportRequest(BaseModel):
@@ -198,6 +209,35 @@ def create_app(library_root: Path) -> FastAPI:
         )
         rows = lib.conn.execute(query, params).fetchall()
         return {"count": len(rows), "plays": [_serialize_play(lib.conn, r) for r in rows]}
+
+    @app.post("/api/plays")
+    def create_play(body: PlayCreate, lib: Library = Depends(get_library)):
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (body.film_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="No such film.")
+        if body.t_end <= body.t_start:
+            raise CutupError(f"end ({body.t_end}) must be after start ({body.t_start}).")
+        play_no = body.play_no
+        if play_no is None:
+            row = lib.conn.execute(
+                "SELECT MAX(play_no) AS m FROM plays WHERE film_id = ?", (body.film_id,)
+            ).fetchone()
+            play_no = (row["m"] or 0) + 1
+        pid = db.insert_play(lib.conn, body.film_id, play_no, body.t_start, body.t_end,
+                             body.source, body.confidence, body.tags)
+        lib.conn.commit()
+        created = lib.conn.execute(
+            "SELECT plays.*, films.label AS film_label FROM plays "
+            "JOIN films ON films.id = plays.film_id WHERE plays.id = ?", (pid,)
+        ).fetchone()
+        return _serialize_play(lib.conn, created)
+
+    @app.delete("/api/plays/{play_id}")
+    def delete_play(play_id: int, lib: Library = Depends(get_library)):
+        cur = lib.conn.execute("DELETE FROM plays WHERE id = ?", (play_id,))
+        lib.conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="No such play.")
+        return {"deleted": play_id}
 
     @app.get("/api/plays/{play_id}")
     def play(play_id: int, lib: Library = Depends(get_library)):

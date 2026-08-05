@@ -43,6 +43,16 @@ export const patchPlay = (id, body) =>
     body: JSON.stringify(body),
   }).then(j)
 
+export const createPlay = (body) =>
+  fetch('/api/plays', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+
+export const deletePlay = (id) =>
+  fetch('/api/plays/' + id, { method: 'DELETE' }).then(j)
+
 export const postExport = (body) =>
   fetch('/api/export', {
     method: 'POST',

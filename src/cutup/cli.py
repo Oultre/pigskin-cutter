@@ -418,6 +418,20 @@ def play_import(
         lib.close()
 
 
+@play_app.command("rm")
+def play_rm(
+    play_id: int = typer.Argument(..., help="Play id (from `play ls`)."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Delete a play and its tags."""
+    lib = Library.open(library)
+    cur = lib.conn.execute("DELETE FROM plays WHERE id = ?", (play_id,))
+    lib.conn.commit()
+    console.print(f"[green]removed play[/green] id={play_id}" if cur.rowcount
+                  else f"No play with id {play_id}.")
+    lib.close()
+
+
 @play_app.command("ls")
 def play_ls(
     film: Optional[int] = typer.Option(None, "--film", help="Restrict to one film."),

@@ -97,5 +97,32 @@ td.lowconf { color: var(--warn); }
 
 .hint { color: var(--warn); font-size: 0.75rem; margin: 0.1rem 0 0.4rem; }
 
+/* tag pass */
+.tag-view { display: grid; grid-template-columns: 1fr 300px; gap: 1rem; padding: 1rem; min-height: 0; overflow: hidden; }
+.tag-main { display: flex; flex-direction: column; min-width: 0; }
+.tag-bar { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+.tag-bar select { flex: 1; }
+.tag-count { color: var(--muted); font-size: 0.8rem; }
+.tag-bar .pad { font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0.1rem 0.5rem; }
+.tag-bar .pad.on { color: #6ee7a8; border-color: #2f5f45; }
+.tag-main video { width: 100%; max-height: 62vh; background: #000; border-radius: 6px; }
+.tag-empty { flex: 1; display: grid; place-items: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; }
+.tag-msg { margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent); min-height: 1.2em; }
+.tag-side { overflow-y: auto; }
+.marks > div { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; font-size: 0.85rem; }
+.marks span { width: 3rem; color: var(--muted); }
+.marks b { flex: 1; font-variant-numeric: tabular-nums; }
+.chart { margin: 0.8rem 0; }
+.chart .frow { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+.chart .frow label { width: 5.5rem; color: var(--muted); font-size: 0.8rem; }
+.chart .frow input { flex: 1; }
+.chart .downs { display: flex; gap: 0.25rem; }
+.chart .downs button { padding: 0.2rem 0.5rem; }
+.chart .downs button.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tag-actions { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.8rem; }
+.legend { font-size: 0.72rem; color: var(--muted); }
+.legend summary { cursor: pointer; margin-bottom: 0.3rem; }
+.legend div { margin: 0.15rem 0; }
+
 .error { color: #ff6b6b; font-size: 0.82rem; margin-top: 0.4rem; }
 .error.banner { padding: 0.4rem 1rem; background: #2a1a1a; margin: 0; }

@@ -4,6 +4,7 @@ import {
   getPresets, savePreset, deletePreset, exportPresets, importPresets,
   getSourceTypes, getLibraryFilms, registerFilm, deleteFilm,
 } from './api.js'
+import TagPass from './TagPass.jsx'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
 const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
@@ -497,12 +498,15 @@ export default function App() {
         <nav>
           <button className={view === 'plays' ? 'active' : ''} onClick={() => setView('plays')}>Plays</button>
           <button className={view === 'films' ? 'active' : ''} onClick={() => setView('films')}>Films</button>
+          <button className={view === 'tag' ? 'active' : ''} onClick={() => setView('tag')}>Tag pass</button>
         </nav>
         <span className="films">{films.length} film(s), {films.reduce((n, f) => n + (f.plays || 0), 0)} plays</span>
       </header>
       {error && <div className="error banner">{error}</div>}
       {view === 'films' ? (
         <FilmLibrary films={films} onChanged={onFilmsChanged} />
+      ) : view === 'tag' ? (
+        <TagPass films={films} onTagged={onFilmsChanged} />
       ) : (
       <div className="cols">
         <aside>

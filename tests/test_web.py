@@ -67,6 +67,36 @@ def test_bad_filter_is_clean_400(client):
     assert "error" in r.json()
 
 
+def test_create_play_autonumbers(client):
+    # film 1 already has plays 1-3; a new one auto-numbers to 4
+    r = client.post("/api/plays", json={
+        "film_id": 1, "t_start": 30.0, "t_end": 34.0,
+        "tags": {"down": "2", "formation": "trips"},
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["play_no"] == 4
+    assert body["source"] == "tagged"
+    assert body["tags"]["formation"] == "trips"
+
+
+def test_create_play_rejects_inverted_times(client):
+    r = client.post("/api/plays", json={"film_id": 1, "t_start": 5.0, "t_end": 5.0})
+    assert r.status_code == 400
+
+
+def test_create_play_unknown_film_404(client):
+    r = client.post("/api/plays", json={"film_id": 999, "t_start": 1.0, "t_end": 2.0})
+    assert r.status_code == 404
+
+
+def test_delete_play(client):
+    created = client.post("/api/plays", json={"film_id": 1, "t_start": 40.0, "t_end": 44.0}).json()
+    assert client.delete("/api/plays/" + str(created["id"])).status_code == 200
+    assert client.get("/api/plays/" + str(created["id"])).status_code == 404
+    assert client.delete("/api/plays/99999").status_code == 404
+
+
 def test_patch_nudges_times_and_confirms(client):
     r = client.patch("/api/plays/2", json={"t_start": 19.0, "t_end": 24.0})
     assert r.status_code == 200
