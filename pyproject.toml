@@ -33,3 +33,7 @@ packages = ["src/cutup"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+    # the FastAPI TestClient's httpx usage is deprecated upstream; not our code
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated:DeprecationWarning",
+]

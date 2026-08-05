@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl,
   getPresets, savePreset, deletePreset, exportPresets, importPresets,
-  getSourceTypes, getLibraryFilms, registerFilm, deleteFilm,
+  getSourceTypes, getLibraryFilms, registerFilm, deleteFilm, importPbp,
 } from './api.js'
 import TagPass from './TagPass.jsx'
 
@@ -335,6 +335,50 @@ function ExportPanel({ filter, count }) {
 
 // -- Film library / import --------------------------------------------------
 
+function PbpImport({ films, onChanged }) {
+  const [filmId, setFilmId] = useState('')
+  const [source, setSource] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState('')
+
+  const run = async (dry) => {
+    setError(''); setBusy(true); setResult(null)
+    try {
+      const r = await importPbp({ film_id: Number(filmId), source, dry_run: dry })
+      setResult(r)
+      if (!dry) onChanged()
+    } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="film-add">
+      <h2>Import play-by-play</h2>
+      <label>Attach to film</label>
+      <select value={filmId} onChange={(e) => setFilmId(e.target.value)} style={{ width: '100%', marginBottom: '0.4rem' }}>
+        <option value="">select film…</option>
+        {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+      </select>
+      <label>Box-score URL or saved .html path</label>
+      <input value={source} onChange={(e) => setSource(e.target.value)}
+        placeholder="https://…/boxscore/25444" style={{ width: '100%' }} />
+      <div className="row" style={{ marginTop: '0.6rem' }}>
+        <button onClick={() => run(true)} disabled={busy || !filmId || !source}>Preview</button>
+        <button className="primary" onClick={() => run(false)} disabled={busy || !filmId || !source}>Import</button>
+      </div>
+      <span className="hint2">Fetched once and cached. Plays land with no cut times (aligned later).</span>
+      {error && <div className="error">{error}</div>}
+      {result && (
+        <div className="result" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
+          {result.dry_run ? 'Preview' : 'Imported'}: {result.count ?? result.imported} plays
+          {' — '}{Object.entries(result.possession || {}).map(([t, n]) => `${t}: ${n}`).join(', ')}
+          {(result.warnings || []).map((w, i) => <div key={i} className="hint">{w}</div>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FilmLibrary({ films, onChanged }) {
   const [available, setAvailable] = useState([])
   const [sourceTypes, setSourceTypes] = useState(Object.keys(SOURCE_LABELS))
@@ -392,6 +436,8 @@ function FilmLibrary({ films, onChanged }) {
         <span className="hint2">Probes fps · codec · interlace · duration. The file must be inside the library folder.</span>
         {error && <div className="error">{error}</div>}
       </div>
+
+      <PbpImport films={films} onChanged={onChanged} />
 
       <div className="film-list">
         <h2>Films in library ({films.length})</h2>

@@ -149,6 +149,31 @@ def test_source_types_endpoint(client):
     assert "all22" in types and "drone" in types
 
 
+def test_config_endpoint_exposes_tag_fields(client):
+    cfg = client.get("/api/config").json()
+    assert isinstance(cfg["tag_fields"], list) and "distance" in cfg["tag_fields"]
+
+
+def test_pbp_import_endpoint(client):
+    from pathlib import Path
+    fixture = Path(__file__).parent / "fixtures" / "pbp" / "chadron-state-2025-boxscore.html"
+    if not fixture.exists():
+        pytest.skip("PBP fixture not present")
+    prev = client.post("/api/pbp", json={"film_id": 1, "source": str(fixture), "dry_run": True}).json()
+    assert prev["dry_run"] and prev["count"] > 100
+    assert "Chadron St." in prev["possession"]
+    done = client.post("/api/pbp", json={"film_id": 1, "source": str(fixture), "dry_run": False}).json()
+    assert done["imported"] == prev["count"]
+    # imported as pbp plays
+    r = client.get("/api/plays", params=[("source", "pbp")])
+    assert r.json()["count"] == done["imported"]
+
+
+def test_pbp_import_unknown_film_404(client):
+    r = client.post("/api/pbp", json={"film_id": 999, "source": "x.html", "dry_run": True})
+    assert r.status_code == 404
+
+
 def test_library_films_lists_unregistered(tmp_path):
     # a library whose folder has an unregistered video file
     root = _library_with_plays(tmp_path)

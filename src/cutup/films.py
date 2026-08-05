@@ -17,8 +17,8 @@ from .ingest.hudl_clips import VIDEO_EXTS
 from .models import SOURCE_TYPES
 from .paths import store_film_path
 
-# Library subfolders that hold app data, not film to be registered.
-_SKIP_DIRS = {"ocr_templates", "import_profiles", "clips"}
+# Library subfolders that hold app data or output, not film to be registered.
+_SKIP_DIRS = {"ocr_templates", "import_profiles", "clips", "cache"}
 
 
 def _resolve_in_library(lib, path) -> Path:
@@ -74,6 +74,8 @@ def list_library_films(lib) -> list[str]:
             continue
         rel_parts = p.relative_to(lib.root).parts
         if rel_parts and rel_parts[0] in _SKIP_DIRS:
+            continue
+        if any(part.startswith(".") for part in rel_parts):   # dot-dirs/files
             continue
         rel = "/".join(rel_parts)
         if rel not in registered:

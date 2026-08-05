@@ -195,6 +195,8 @@ def config_set(
         except ValueError as exc:
             lib.close()
             raise CutupError(f"{key} must be a number, got {value!r}.") from exc
+    elif key == "tag_fields":
+        coerced = [v.strip() for v in value.split(",") if v.strip()]
     setattr(lib.config, key, coerced)
     lib.save_config()
     console.print(f"[green]set[/green] {key} = {coerced}")

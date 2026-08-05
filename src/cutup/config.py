@@ -11,7 +11,7 @@ encoder probe cache — lives elsewhere (see ``paths.cache_dir``).
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 CONFIG_FILENAME = "config.json"
@@ -43,6 +43,10 @@ class Config:
     watermark_logo: str | None = None
     watermark_position: str = "bottom-right"   # bottom-right|bottom-left|top-right|top-left|center
     watermark_scale: float = 0.12              # logo width as a fraction of the video width
+
+    # Chart fields captured as text inputs in the tag pass (down and hash always
+    # have quick-keys). Set to your coordinators' vocabulary. Stored as a list.
+    tag_fields: list[str] = field(default_factory=lambda: ["distance", "off_form", "play_type"])
 
     @classmethod
     def load(cls, library_root: Path) -> "Config":

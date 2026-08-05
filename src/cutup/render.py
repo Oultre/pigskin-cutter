@@ -268,8 +268,10 @@ def execute(clips: list[ClipSpec], *, workers: int | None = None,
     clips[0].out_path.parent.mkdir(parents=True, exist_ok=True)
 
     if workers is None:
-        workers = max((os.cpu_count() or 2) - 1, 1)
-    workers = min(workers, 4)
+        # auto: cpu_count-1, capped at 4 so a laptop doesn't thermal-throttle.
+        # An explicit --workers is respected as given.
+        workers = min(max((os.cpu_count() or 2) - 1, 1), 4)
+    workers = max(workers, 1)
 
     def _run(clip: ClipSpec) -> RenderResult:
         if clip.mode == "file":

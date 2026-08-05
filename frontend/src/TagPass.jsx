@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { streamUrl, createPlay, deletePlay } from './api.js'
+import { streamUrl, createPlay, deletePlay, getConfig } from './api.js'
 
 function fmt(t) {
   if (t === null || t === undefined) return '—'
@@ -23,6 +23,11 @@ export default function TagPass({ films, onTagged }) {
   const [count, setCount] = useState(0)
   const [msg, setMsg] = useState('Pick a film and start marking plays.')
   const [pad, setPad] = useState(null)
+  const [tagFields, setTagFields] = useState(['distance', 'off_form', 'play_type'])
+
+  useEffect(() => {
+    getConfig().then((c) => { if (Array.isArray(c.tag_fields) && c.tag_fields.length) setTagFields(c.tag_fields) }).catch(() => {})
+  }, [])
 
   const videoRef = useRef(null)
   const lastIdRef = useRef(null)
@@ -164,10 +169,6 @@ export default function TagPass({ films, onTagged }) {
             </div>
           </div>
           <div className="frow">
-            <label>distance</label>
-            <input value={fields.distance || ''} onChange={(e) => setField('distance', e.target.value)} />
-          </div>
-          <div className="frow">
             <label>hash</label>
             <div className="downs">
               {['L', 'M', 'R'].map((h) => (
@@ -176,14 +177,12 @@ export default function TagPass({ films, onTagged }) {
               ))}
             </div>
           </div>
-          <div className="frow">
-            <label>formation</label>
-            <input value={fields.off_form || ''} onChange={(e) => setField('off_form', e.target.value)} />
-          </div>
-          <div className="frow">
-            <label>play type</label>
-            <input value={fields.play_type || ''} onChange={(e) => setField('play_type', e.target.value)} />
-          </div>
+          {tagFields.filter((f) => f !== 'down' && f !== 'hash').map((f) => (
+            <div className="frow" key={f}>
+              <label>{f.replace(/_/g, ' ')}</label>
+              <input value={fields[f] || ''} onChange={(e) => setField(f, e.target.value)} />
+            </div>
+          ))}
         </div>
 
         <div className="tag-actions">

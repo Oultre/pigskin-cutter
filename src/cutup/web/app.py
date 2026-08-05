@@ -29,6 +29,7 @@ from .. import (
     presets as presets_mod,
     render as render_mod,
 )
+from ..ingest import pbp as pbp_mod
 from ..errors import CutupError
 from ..library import Library
 from ..models import SOURCE_TYPES
@@ -61,6 +62,13 @@ class FilmBody(BaseModel):
 class PresetImport(BaseModel):
     presets: list[dict] = []
     overwrite: bool = True
+
+
+class PBPImport(BaseModel):
+    film_id: int
+    source: str                 # box-score URL or a server-side .html path
+    refetch: bool = False
+    dry_run: bool = True
 
 
 class PlayCreate(BaseModel):
@@ -156,6 +164,10 @@ def create_app(library_root: Path) -> FastAPI:
     def source_types():
         return list(SOURCE_TYPES)
 
+    @app.get("/api/config")
+    def config(lib: Library = Depends(get_library)):
+        return vars(lib.config)
+
     @app.get("/api/library-films")
     def library_films(lib: Library = Depends(get_library)):
         """Video files in the library folder that are not registered yet."""
@@ -167,6 +179,22 @@ def create_app(library_root: Path) -> FastAPI:
         lib.conn.commit()
         row = lib.conn.execute("SELECT * FROM films WHERE id = ?", (film_id,)).fetchone()
         return dict(row)
+
+    @app.post("/api/pbp")
+    def import_pbp(body: PBPImport, lib: Library = Depends(get_library)):
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (body.film_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="No such film.")
+        html = pbp_mod.fetch(body.source, lib.root / "cache", refetch=body.refetch)
+        parsed = pbp_mod.parse(html)
+        from collections import Counter
+        split = dict(Counter(p["tags"].get("possession") for p in parsed.plays))
+        if body.dry_run:
+            return {"dry_run": True, "count": parsed.count, "teams": parsed.teams,
+                    "possession": split, "warnings": parsed.warnings}
+        pbp_mod.to_plays(lib.conn, body.film_id, parsed)
+        lib.conn.commit()
+        return {"dry_run": False, "imported": parsed.count, "teams": parsed.teams,
+                "possession": split, "warnings": parsed.warnings}
 
     @app.delete("/api/films/{film_id}")
     def remove_film(film_id: int, lib: Library = Depends(get_library)):
