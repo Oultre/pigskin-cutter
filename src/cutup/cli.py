@@ -94,20 +94,21 @@ def app_launch(
         None, "--library", "-L", envvar="CUTUP_LIBRARY",
         help="Library folder (default: your Documents/Pigskin Cutter, created if missing)."),
     port: Optional[int] = typer.Option(None, "--port", help="Preferred port (default: an open one)."),
-    no_browser: bool = typer.Option(False, "--no-browser", help="Don't open the browser."),
+    browser: bool = typer.Option(False, "--browser", help="Open in your web browser instead of an app window."),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Start the server only; open nothing (for testing)."),
     force: bool = typer.Option(False, "--force", help="Break a stale library lock."),
 ):
-    """Start Pigskin Cutter and open it in your browser — the friendly launcher.
+    """Start Pigskin Cutter in its own app window — the friendly launcher.
 
     This is what a double-clicked build runs: it opens (or creates) your library,
-    starts the local app, and pops open your browser. No terminal needed.
+    starts the local app, and shows it in a desktop window. No terminal, no browser
+    tab. (Falls back to your browser if this machine has no webview.)
     """
-    import socket
     import threading
-    import webbrowser
+
+    from . import desktop
 
     try:
-        import uvicorn
         from .web.app import create_app
     except ImportError as exc:
         raise CutupError("The app needs fastapi and uvicorn installed.") from exc
@@ -126,6 +127,34 @@ def app_launch(
     from .library import acquire_lock, release_lock
     acquire_lock(root, force=force)
     url = f"http://127.0.0.1:{chosen}"
+
+    use_window = not browser and not no_browser and desktop.native_window_available()
+
+    if use_window:
+        # Server on a background thread; the window owns the main thread and,
+        # when closed, stops the server and releases the lock.
+        import uvicorn
+
+        config = uvicorn.Config(create_app(root), host="127.0.0.1", port=chosen, log_level="warning")
+        server = uvicorn.Server(config)
+        server.install_signal_handlers = lambda: None
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        desktop.wait_until_serving(chosen)
+        console.print(f"[bold]Pigskin Cutter[/bold] is open. Close the window to quit.")
+
+        def _shutdown():
+            server.should_exit = True
+            thread.join(timeout=5)
+            release_lock(root)
+
+        desktop.run_window(url, on_close=_shutdown)
+        return
+
+    # Browser (or headless) fallback: the terminal is the app's lifetime.
+    import uvicorn
+    import webbrowser
+
     console.print(f"[bold]Pigskin Cutter[/bold] is running at {url}")
     console.print("Leave this window open while you work; close it to stop.")
     if not no_browser:
@@ -1735,8 +1764,46 @@ def _quote(arg: str) -> str:
     return f'"{arg}"' if " " in arg else arg
 
 
+_GUI_NO_CONSOLE = False
+
+
+def _prepare_console() -> None:
+    """Make output work whether double-clicked or run from a terminal.
+
+    The shipped Windows build is windowed (no console — a double-click shows the
+    app window, not a black box), so ``sys.stdout`` is ``None`` at startup. If we
+    were launched from a terminal for CLI use (``PigskinCutter diagnostics``),
+    attach to that terminal so output appears there; if double-clicked, route
+    output to a null sink so nothing crashes on a stray ``print``.
+    """
+    global _GUI_NO_CONSOLE
+    if sys.platform != "win32" or sys.stdout is not None:
+        return
+    import ctypes
+
+    if ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
+        target = "CONOUT$"
+    else:
+        target = os.devnull
+        _GUI_NO_CONSOLE = True
+    try:
+        sys.stdout = open(target, "w", buffering=1, encoding="utf-8", errors="replace")
+        sys.stderr = open(target, "w", buffering=1, encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+
+
+def _error_dialog(message: str) -> None:
+    """Show a native error box (GUI mode has no console to print to)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Pigskin Cutter", 0x10)
+
+
 def main() -> None:
     """Console-script entry point with legible error handling."""
+    _prepare_console()
     # Windows consoles (and redirected pipes) default to a legacy code page like
     # cp1252, which raises UnicodeEncodeError on characters outside it. Force
     # UTF-8 with replacement so output never crashes the tool on any machine.
@@ -1748,7 +1815,10 @@ def main() -> None:
     try:
         app()
     except CutupError as exc:
-        err_console.print(f"[red]Error:[/red] {exc}")
+        if _GUI_NO_CONSOLE:
+            _error_dialog(str(exc))
+        else:
+            err_console.print(f"[red]Error:[/red] {exc}")
         raise SystemExit(1)
 
 
