@@ -87,6 +87,73 @@ def init(path: Path = typer.Argument(..., help="Folder for the new library.")):
     lib.close()
 
 
+@app.command("app")
+def app_launch(
+    library: Optional[Path] = typer.Option(
+        None, "--library", "-L", envvar="CUTUP_LIBRARY",
+        help="Library folder (default: your Documents/Pigskin Cutter, created if missing)."),
+    port: Optional[int] = typer.Option(None, "--port", help="Preferred port (default: an open one)."),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Don't open the browser."),
+    force: bool = typer.Option(False, "--force", help="Break a stale library lock."),
+):
+    """Start Pigskin Cutter and open it in your browser — the friendly launcher.
+
+    This is what a double-clicked build runs: it opens (or creates) your library,
+    starts the local app, and pops open your browser. No terminal needed.
+    """
+    import socket
+    import threading
+    import webbrowser
+
+    try:
+        import uvicorn
+        from .web.app import create_app
+    except ImportError as exc:
+        raise CutupError("The app needs fastapi and uvicorn installed.") from exc
+
+    # resolve the library, creating a default one on first run
+    if library is None and not os.environ.get("CUTUP_LIBRARY"):
+        root = Path.home() / "Documents" / "Pigskin Cutter"
+        if not (root / "library.sqlite").exists():
+            Library.init(root)
+            console.print(f"[green]Created your library[/green] at {root}")
+    else:
+        root = Library.resolve_root(library)
+        Library.open(library).close()   # validate it exists
+
+    chosen = _first_open_port(port)
+    from .library import acquire_lock, release_lock
+    acquire_lock(root, force=force)
+    url = f"http://127.0.0.1:{chosen}"
+    console.print(f"[bold]Pigskin Cutter[/bold] is running at {url}")
+    console.print("Leave this window open while you work; close it to stop.")
+    if not no_browser:
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    try:
+        uvicorn.run(create_app(root), host="127.0.0.1", port=chosen, log_level="warning")
+    finally:
+        release_lock(root)
+
+
+def _first_open_port(preferred: Optional[int]) -> int:
+    """Return the first bindable port: the preferred one, then 8777, then any."""
+    import socket
+    for candidate in [p for p in (preferred, 8000, 8777) if p is not None]:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", candidate))
+            return candidate
+        except OSError:
+            continue
+        finally:
+            s.close()
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))          # OS picks a free ephemeral port
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address (localhost only by default)."),

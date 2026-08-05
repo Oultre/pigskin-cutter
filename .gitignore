@@ -35,6 +35,9 @@ venv/
 .mypy_cache/
 dist/
 build/
+packaging/dist/
+packaging/build/
+*.spec.bak
 
 # --- node / frontend --------------------------------------------------------
 node_modules/

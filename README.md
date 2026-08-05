@@ -14,7 +14,11 @@ No accounts, no server, no sync. Everything runs locally against files on disk.
 
 ## Status
 
-**Phases 1–6 are built.** Phase 1: index a film, filter plays, export individual clips,
+**Phases 1–9 are built** (all but the deferred reels phase). The broadcast OCR
+path is proven end-to-end on real film, and unsigned one-file builds are produced
+by CI. See `docs/PLAN.md` §6 for the phase map and `docs/USER_GUIDE.md` for coaches.
+
+**Phases 1–6 detail:** Phase 1: index a film, filter plays, export individual clips,
 with `--dry-run` on every write path. Phase 2: the Hudl breakdown importer with reusable
 column-mapping profiles. Phase 3: pre-cut Hudl clips end to end — match a folder of clips to
 breakdown rows, reconcile the drift, and export by whole-file copy. Phase 4: a local web UI
@@ -45,11 +49,19 @@ PBP plays land with **no cut times yet** (possession, yard line, result, play ty
 Phase 7 aligns them onto the video timeline. Pages are fetched once and cached to
 `<library>/cache/pbp/`; a saved `.html` file works as the source too.
 
-## Web UI
+## Running it
+
+Coaches get a one-file build (no install) — see [docs/INSTALL.md](docs/INSTALL.md).
+Double-clicking it runs `cutup app`, which opens/creates a library, starts the
+local app, and opens the browser. From source:
 
 ```bash
-cutup serve -L ./my-library          # then open http://127.0.0.1:8000
+cutup app                            # friendly launcher: serve + open browser
+cutup serve -L ./my-library          # or just the server on http://127.0.0.1:8000
 ```
+
+Builds are produced unsigned for macOS/Windows/Linux by GitHub Actions on a tag
+(`.github/workflows/release.yml`), with ffmpeg bundled.
 
 Library view, filter builder, play grid, a Range-streamed preview with per-clip nudge, and a
 dry-run/real export panel — all over the same CLI engine.
