@@ -89,28 +89,32 @@ def estimate_snaps(clockmap: ClockMap, plays: list[AlignPlay],
     return sorted(placements, key=lambda pl: pl.play_no)
 
 
-def detect_snaps(playclock_series, high: int = 38, low: int = 30,
-                 min_gap: float = 6.0) -> list[float]:
-    """Every snap in the film, from the play clock resetting to ~40.
+def detect_snaps(playclock_series, high: int = 38, min_hold: float = 2.0,
+                 gap_tol: float = 1.6, min_gap: float = 6.0) -> list[float]:
+    """Every snap in the film, from the *held* ~40 the play clock shows at the snap.
 
-    In this broadcast the play clock counts down pre-snap, then jumps back up to
-    40 the instant the ball is snapped (and the game clock starts). So a *rising
-    edge* into a fresh 40 — from a lower, counting-down value — marks one snap,
-    once per play. Returns the snap video-seconds, sorted. Implausible reads
-    (>45) and edges closer together than ``min_gap`` are ignored as noise.
+    In this broadcast the play clock counts down pre-snap, then sits at ~40 while
+    the ball is in play — a plateau lasting several seconds, once per play. So we
+    cluster the moments the clock reads ~40 (bridging brief OCR dropouts up to
+    ``gap_tol`` apart) and take the onset of each plateau that lasts at least
+    ``min_hold`` seconds. This survives 1 fps sampling and camera-cut garbage far
+    better than looking for the single rising-edge frame: the plateau is sampled
+    many times, a lone spike is not. Returns snap video-seconds, sorted.
     """
-    series = sorted((v, pc) for v, pc in playclock_series if pc is not None and 0 <= pc <= 45)
+    highs = sorted(v for v, pc in playclock_series if pc is not None and high <= pc <= 45)
+    if not highs:
+        return []
     snaps: list[float] = []
-    prev: int | None = None
-    n = len(series)
-    for i, (v, pc) in enumerate(series):
-        # a real reset rises into ~40 from a counting-down value (prev <= low) and
-        # then *holds* high; a lone OCR spike during a camera cut does not.
-        if pc >= high and prev is not None and prev <= low:
-            hold = sum(1 for k in range(i, min(i + 3, n)) if series[k][1] >= high)
-            if hold >= 2 and (not snaps or v - snaps[-1] >= min_gap):
-                snaps.append(v)
-        prev = pc
+    run_start = last = highs[0]
+    for t in highs[1:]:
+        if t - last <= gap_tol:
+            last = t
+            continue
+        if last - run_start >= min_hold and (not snaps or run_start - snaps[-1] >= min_gap):
+            snaps.append(run_start)
+        run_start = last = t
+    if last - run_start >= min_hold and (not snaps or run_start - snaps[-1] >= min_gap):
+        snaps.append(run_start)
     return snaps
 
 
