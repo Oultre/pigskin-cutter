@@ -22,6 +22,12 @@ export const registerFilm = (body) =>
   }).then(j)
 export const deleteFilm = (id) =>
   fetch('/api/films/' + id, { method: 'DELETE' }).then(j)
+export const importFilm = (body) =>
+  fetch('/api/films/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
 export const importPbp = (body) =>
   fetch('/api/pbp', {
     method: 'POST',

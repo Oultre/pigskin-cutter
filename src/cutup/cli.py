@@ -149,7 +149,7 @@ def app_launch(
             thread.join(timeout=5)
             release_lock(root)
 
-        desktop.run_window(url, on_close=_shutdown)
+        desktop.run_window(url, on_close=_shutdown, library_root=root)
         return
 
     # Browser (or headless) fallback: the terminal is the app's lifetime.

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
   getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
-  deleteFilm, importPbp, startAlign, getJob, getExportSizes, startReel,
+  deleteFilm, importFilm, importPbp, startAlign, getJob, getExportSizes, startReel,
 } from './api.js'
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
@@ -594,15 +594,38 @@ function FilmLibrary({ films, onChanged, flash, nav }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [hot, setHot] = useState(false)
+  const [job, setJob] = useState(null)
+  const poll = useRef(null)
   const hasNative = typeof window !== 'undefined' && window.pywebview && window.pywebview.api && window.pywebview.api.pick_film
 
   const refresh = () => getLibraryFilms().then(setAvailable).catch(() => {})
   useEffect(() => { refresh(); getSourceTypes().then(setSourceTypes).catch(() => {}) }, [films])
+  useEffect(() => () => clearInterval(poll.current), [])
+
+  const isAbsolute = (p) => /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p)
 
   const add = async () => {
-    setBusy(true); setError('')
-    try { await registerFilm({ path, label: label || null, source_type: stype }); setPath(''); setLabel(''); onChanged(); flash('Film added') }
-    catch (e) { setError(e.message) } finally { setBusy(false) }
+    setBusy(true); setError(''); setJob(null)
+    try {
+      if (isAbsolute(path)) {
+        // A film from elsewhere on disk: copy it into the library (background job).
+        const j = await importFilm({ src: path, label: label || null, source_type: stype })
+        setJob(j)
+        poll.current = setInterval(async () => {
+          try {
+            const u = await getJob(j.id); setJob(u)
+            if (u.status !== 'running') {
+              clearInterval(poll.current); setBusy(false)
+              if (u.status === 'done') { setPath(''); setLabel(''); onChanged(); flash('Film added') }
+              else setError(u.message)
+            }
+          } catch { clearInterval(poll.current); setBusy(false) }
+        }, 700)
+      } else {
+        await registerFilm({ path, label: label || null, source_type: stype })
+        setPath(''); setLabel(''); onChanged(); flash('Film added'); setBusy(false)
+      }
+    } catch (e) { setError(e.message); setBusy(false) }
   }
   const remove = async (id) => {
     if (!window.confirm('Remove this film and its plays from the index? (The file stays on disk.)')) return
@@ -647,8 +670,14 @@ function FilmLibrary({ films, onChanged, flash, nav }) {
               {sourceTypes.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
             </select></div>
         </div>
-        <button className="btn primary" style={{ marginTop: 12 }} disabled={busy || !path} onClick={add}>Add film</button>
-        <span className="hint2">Probes fps · codec · interlace · duration.</span>
+        <button className="btn primary" style={{ marginTop: 12 }} disabled={busy || !path} onClick={add}>
+          {busy ? 'Adding…' : 'Add film'}
+        </button>
+        <span className="hint2">A film from outside your library is copied in. Probes fps · codec · interlace · duration.</span>
+        {job && <div className={'job' + (job.status === 'failed' ? ' bad' : '')}>
+          {job.message}
+          {job.status === 'running' && job.total > 0 && <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.round(100 * job.done / job.total)}%` }} /></div>}
+        </div>}
         {error && <div className="error">{error}</div>}
       </div>
 

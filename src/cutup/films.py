@@ -55,6 +55,59 @@ def register_film(lib, path, label: str | None, source_type: str) -> int:
     return cur.lastrowid
 
 
+def import_external_film(lib, src, label: str | None, source_type: str, *,
+                         progress=None) -> int:
+    """Copy a film from anywhere on disk into the library, then register it.
+
+    Films must live inside the library folder so film and index travel together
+    (PLAN §3.5). When a coach browses to (or drops) a game that lives elsewhere,
+    this copies it into ``<library>/film/`` first — with progress — then registers
+    the in-library copy. Returns the new film id. Caller commits.
+    """
+    import shutil
+
+    src = Path(src)
+    if not src.exists():
+        raise CutupError(f"That file doesn't exist: {src}")
+    if src.suffix.lower() not in VIDEO_EXTS:
+        raise CutupError(f"That doesn't look like a video file: {src.name}")
+
+    # Already somewhere inside the library? Register it in place, don't copy.
+    try:
+        src.resolve().relative_to(lib.root.resolve())
+        return register_film(lib, src, label, source_type)
+    except ValueError:
+        pass
+
+    dest_dir = lib.root / "film"
+    dest_dir.mkdir(exist_ok=True)
+    dest = dest_dir / src.name
+    if dest.exists():
+        stem, suf = dest.stem, dest.suffix
+        n = 2
+        while (dest_dir / f"{stem}-{n}{suf}").exists():
+            n += 1
+        dest = dest_dir / f"{stem}-{n}{suf}"
+
+    total = src.stat().st_size
+    copied = 0
+    try:
+        with src.open("rb") as fi, dest.open("wb") as fo:
+            while True:
+                chunk = fi.read(4 << 20)
+                if not chunk:
+                    break
+                fo.write(chunk)
+                copied += len(chunk)
+                if progress:
+                    progress(copied, total)
+    except OSError as exc:
+        if dest.exists():
+            dest.unlink(missing_ok=True)
+        raise CutupError(f"Couldn't copy the film into the library: {exc}") from exc
+    return register_film(lib, dest, label, source_type)
+
+
 def remove_film(lib, film_id: int) -> int:
     """Remove a film (and its plays/tags via cascade). Returns rows removed."""
     cur = lib.conn.execute("DELETE FROM films WHERE id = ?", (film_id,))

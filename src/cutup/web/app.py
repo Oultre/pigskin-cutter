@@ -63,6 +63,12 @@ class FilmBody(BaseModel):
     source_type: str = "broadcast"
 
 
+class FilmImport(BaseModel):
+    src: str                              # absolute path to a film anywhere on disk
+    label: Optional[str] = None
+    source_type: str = "broadcast"
+
+
 class PresetImport(BaseModel):
     presets: list[dict] = []
     overwrite: bool = True
@@ -300,6 +306,30 @@ def _reel_job(root: Path, job_id: str, jobs: dict, req: "ReelRequest", out: Path
             lib.close()
 
 
+def _import_film_job(root: Path, job_id: str, jobs: dict, req: "FilmImport") -> None:
+    """Copy an external film into the library and register it, in a thread."""
+    job = jobs[job_id]
+    lib = None
+    try:
+        lib = Library.open(root)
+
+        def progress(copied, total):
+            job.update(done=copied, total=total,
+                       message=f"Copying… {copied >> 20} / {total >> 20} MB")
+
+        film_id = films_mod.import_external_film(
+            lib, req.src, req.label, req.source_type, progress=progress)
+        lib.conn.commit()
+        job.update(status="done", phase="done", film_id=film_id,
+                   message="Film added to your library.")
+    except Exception as exc:
+        job.update(status="failed", phase="done", message=str(exc))
+    finally:
+        job["finished"] = datetime.now().isoformat(timespec="seconds")
+        if lib is not None:
+            lib.close()
+
+
 def create_app(library_root: Path) -> FastAPI:
     app = FastAPI(title="Pigskin Cutter", docs_url="/api/docs")
     app.state.library_root = Path(library_root)
@@ -357,6 +387,20 @@ def create_app(library_root: Path) -> FastAPI:
         lib.conn.commit()
         row = lib.conn.execute("SELECT * FROM films WHERE id = ?", (film_id,)).fetchone()
         return dict(row)
+
+    @app.post("/api/films/import")
+    def import_film(body: FilmImport, lib: Library = Depends(get_library)):
+        """Copy a film from anywhere on disk into the library (background job)."""
+        jobs = app.state.jobs
+        if any(j["status"] == "running" for j in jobs.values()):
+            raise HTTPException(status_code=409, detail="A job is already running.")
+        job_id = uuid.uuid4().hex[:8]
+        jobs[job_id] = {"id": job_id, "kind": "import", "status": "running",
+                        "phase": "copying", "done": 0, "total": 0,
+                        "message": "Starting…", "started": datetime.now().isoformat(timespec="seconds")}
+        threading.Thread(target=_import_film_job,
+                         args=(app.state.library_root, job_id, jobs, body), daemon=True).start()
+        return jobs[job_id]
 
     @app.post("/api/pbp")
     def import_pbp(body: PBPImport, lib: Library = Depends(get_library)):
