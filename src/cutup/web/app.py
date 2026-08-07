@@ -81,6 +81,15 @@ class AlignRequest(BaseModel):
     end: Optional[float] = None
 
 
+class DetectRequest(BaseModel):
+    film_id: int
+    threshold: float = 0.4
+    start: float = 0.0
+    end: Optional[float] = None
+    min_len: float = 2.5
+    max_len: float = 45.0
+
+
 class ReelRequest(BaseModel):
     out: Optional[str] = None            # output file; defaults to <library>/reels/…
     where: list[str] = []
@@ -224,6 +233,51 @@ def _align_job(root: Path, job_id: str, jobs: dict, film_id: int,
         job.update(status="done", phase="done", placed=len(cut), refined=refined,
                    message=f"Aligned {len(cut)} plays ({refined} snap-refined).")
     except Exception as exc:  # keep the job legible, never crash the server
+        job.update(status="failed", phase="done", message=str(exc))
+    finally:
+        job["finished"] = datetime.now().isoformat(timespec="seconds")
+        if lib is not None:
+            lib.close()
+
+
+def _detect_job(root: Path, job_id: str, jobs: dict, req: "DetectRequest") -> None:
+    """Find plays by scene cuts (All-22 / coaches film) and insert them."""
+    from .. import scenedetect as sd
+
+    job = jobs[job_id]
+    lib = None
+    try:
+        lib = Library.open(root)
+        row = lib.conn.execute("SELECT path, duration FROM films WHERE id = ?", (req.film_id,)).fetchone()
+        video = resolve_film_path(lib.root, row["path"])
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        job.update(phase="scanning", message="Looking for camera cuts…")
+
+        def progress(secs):
+            job.update(processed=round(secs, 1))
+
+        cuts = sd.scene_cuts(ffmpeg, video, threshold=req.threshold,
+                             start=req.start, end=req.end, progress=progress)
+        segments = sd.cuts_to_segments(
+            cuts, start=req.start, duration=req.end or row["duration"],
+            min_len=req.min_len, max_len=req.max_len)
+        if not segments:
+            job.update(status="failed", phase="done",
+                       message="No plays found. Try a lower sensitivity, or this film may not be "
+                               "cut play-to-play (broadcast? use the game-clock option instead).")
+            return
+
+        nxt = lib.conn.execute(
+            "SELECT COALESCE(MAX(play_no), 0) AS m FROM plays WHERE film_id = ?", (req.film_id,)
+        ).fetchone()["m"]
+        for i, (ts, te) in enumerate(segments, start=1):
+            lib.conn.execute(
+                "INSERT INTO plays (film_id, play_no, t_start, t_end, source, confidence) "
+                "VALUES (?,?,?,?, 'detected', 0.5)", (req.film_id, nxt + i, ts, te))
+        lib.conn.commit()
+        job.update(status="done", phase="done", placed=len(segments),
+                   message=f"Found {len(segments)} plays from scene cuts.")
+    except Exception as exc:
         job.update(status="failed", phase="done", message=str(exc))
     finally:
         job["finished"] = datetime.now().isoformat(timespec="seconds")
@@ -437,6 +491,24 @@ def create_app(library_root: Path) -> FastAPI:
             args=(app.state.library_root, job_id, jobs, body.film_id, body.package, body.start, body.end),
             daemon=True,
         ).start()
+        return jobs[job_id]
+
+    @app.post("/api/detect")
+    def start_detect(body: DetectRequest, lib: Library = Depends(get_library)):
+        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (body.film_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No such film.")
+        if not resolve_film_path(lib.root, row["path"]).exists():
+            raise CutupError("Film file not found — is the video in the library folder?")
+        jobs = app.state.jobs
+        if any(j["status"] == "running" for j in jobs.values()):
+            raise HTTPException(status_code=409, detail="A job is already running.")
+        job_id = uuid.uuid4().hex[:8]
+        jobs[job_id] = {"id": job_id, "kind": "detect", "status": "running", "phase": "starting",
+                        "processed": 0, "placed": 0, "message": "Starting…",
+                        "started": datetime.now().isoformat(timespec="seconds")}
+        threading.Thread(target=_detect_job, args=(app.state.library_root, job_id, jobs, body),
+                         daemon=True).start()
         return jobs[job_id]
 
     @app.post("/api/reel")

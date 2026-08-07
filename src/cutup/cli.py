@@ -28,7 +28,7 @@ from rich.table import Table
 from . import (
     __version__, align as align_mod, db, ffmpeg as ffmpeg_mod, films as films_mod,
     filters as filters_mod, presets as presets_mod, qa as qa_mod, reel as reel_mod,
-    sizes as sizes_mod,
+    scenedetect as sd_mod, sizes as sizes_mod,
 )
 from .ocr.clockmap import ClockMap
 from .ocr.templates import RegionTemplate
@@ -808,6 +808,49 @@ def export(
 
 
 # -- reel ------------------------------------------------------------------
+
+
+@app.command()
+def detect(
+    film: int = typer.Option(..., "--film", help="Film id to scan for scene cuts."),
+    threshold: float = typer.Option(0.4, "--threshold", help="Scene sensitivity 0-1 (lower finds more cuts)."),
+    start: float = typer.Option(0.0, "--start"),
+    end: Optional[float] = typer.Option(None, "--end"),
+    min_len: float = typer.Option(2.5, "--min-len", help="Shortest span kept as a play (seconds)."),
+    max_len: float = typer.Option(45.0, "--max-len", help="Longest span kept as a play (seconds)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plays it would add, write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Find plays by scene cuts on All-22 / coaches film (no game clock needed)."""
+    lib = Library.open(library)
+    try:
+        row = lib.conn.execute("SELECT path, duration FROM films WHERE id = ?", (film,)).fetchone()
+        if row is None:
+            raise CutupError(f"No film with id {film}.")
+        video = resolve_film_path(lib.root, row["path"])
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        console.print(f"Scanning {video.name} for scene cuts (threshold {threshold})…")
+        cuts = sd_mod.scene_cuts(ffmpeg, video, threshold=threshold, start=start, end=end)
+        segs = sd_mod.cuts_to_segments(cuts, start=start, duration=end or row["duration"],
+                                       min_len=min_len, max_len=max_len)
+        if not segs:
+            console.print("No plays found. Try a lower threshold, or this film may not be cut play-to-play.")
+            return
+        console.print(f"Found [bold]{len(segs)}[/bold] plays from {len(cuts)} cuts.")
+        if dry_run:
+            for i, (a, b) in enumerate(segs[:20], 1):
+                console.print(f"  {i:>3}  {format_time(a)} → {format_time(b)}  ({b - a:.1f}s)")
+            if len(segs) > 20:
+                console.print(f"  … and {len(segs) - 20} more")
+            return
+        nxt = lib.conn.execute("SELECT COALESCE(MAX(play_no),0) m FROM plays WHERE film_id=?", (film,)).fetchone()["m"]
+        for i, (a, b) in enumerate(segs, 1):
+            lib.conn.execute("INSERT INTO plays (film_id, play_no, t_start, t_end, source, confidence) "
+                             "VALUES (?,?,?,?, 'detected', 0.5)", (film, nxt + i, a, b))
+        lib.conn.commit()
+        console.print(f"[green]Added {len(segs)} detected plays.[/green]")
+    finally:
+        lib.close()
 
 
 @app.command()

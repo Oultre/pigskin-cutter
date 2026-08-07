@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
   getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
-  deleteFilm, importFilm, importPbp, startAlign, getJob, getExportSizes, startReel,
+  deleteFilm, importFilm, importPbp, startAlign, startDetect, getJob, getExportSizes, startReel,
 } from './api.js'
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
@@ -543,43 +543,64 @@ function DataGrab({ films, filmId, onChanged, flash, nav }) {
 // -- AUTO DETECT (align; scene-detect coming) -------------------------------
 function AutoDetect({ films, filmId, onChanged, flash, nav }) {
   const [film, setFilm] = useState(filmId || '')
-  const [job, setJob] = useState(null)
+  const [film2, setFilm2] = useState(filmId || '')
+  const [sens, setSens] = useState('0.4')
+  const [job, setJob] = useState(null)      // clock job
+  const [job2, setJob2] = useState(null)    // scene job
   const [error, setError] = useState('')
   const poll = useRef(null)
   useEffect(() => () => clearInterval(poll.current), [])
-  const start = async () => {
-    setError(''); setJob(null)
-    try {
-      const j = await startAlign({ film_id: Number(film) }); setJob(j)
+
+  const runJob = (starter, setter) => {
+    setError(''); setter(null)
+    starter().then((j) => {
+      setter(j)
       poll.current = setInterval(async () => {
-        try { const u = await getJob(j.id); setJob(u); if (u.status !== 'running') { clearInterval(poll.current); if (u.status === 'done') { onChanged(); flash(u.message) } } }
+        try { const u = await getJob(j.id); setter(u); if (u.status !== 'running') { clearInterval(poll.current); if (u.status === 'done') { onChanged(); flash(u.message) } } }
         catch { clearInterval(poll.current) }
       }, 2000)
-    } catch (e) { setError(e.message) }
+    }).catch((e) => setError(e.message))
   }
-  const running = job && job.status === 'running'
+  const running = (job && job.status === 'running') || (job2 && job2.status === 'running')
   return (
     <div className="screen">
       <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span><h2>Auto Detect <span className="count">· find plays automatically</span></h2></div>
+
       <div className="form-card">
         <h4 style={{ margin: '0 0 6px' }}>Broadcast — read the game clock</h4>
-        <p className="hint3">Reads the on-screen game clock and lines your imported play-by-play up with the video. Needs the play-by-play imported first and a visible clock. Takes several minutes.</p>
+        <p className="hint3">Reads the on-screen game clock and lines your imported play-by-play up with the video. Needs the play-by-play imported first (Data Grab) and a visible clock. Takes several minutes.</p>
         <div style={{ display: 'flex', gap: 10 }}>
           <select className="inp" style={{ flex: 1 }} value={film} disabled={running} onChange={(e) => setFilm(e.target.value)}>
             <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
           </select>
-          <button className="btn primary" disabled={!film || running} onClick={start}>{running ? 'Scanning…' : 'Auto-align'}</button>
+          <button className="btn primary" disabled={!film || running} onClick={() => runJob(() => startAlign({ film_id: Number(film) }), setJob)}>{job && job.status === 'running' ? 'Scanning…' : 'Auto-align'}</button>
         </div>
         {job && <div className={'job' + (job.status === 'failed' ? ' bad' : '')}>
           <b>{job.phase}</b> — {job.message}
-          {running && <div>{job.frames} frames read · {job.samples} clock reads</div>}
+          {job.status === 'running' && <div>{job.frames} frames read · {job.samples} clock reads</div>}
         </div>}
-        {error && <div className="error">{error}</div>}
       </div>
+
       <div className="form-card">
-        <h4 style={{ margin: '0 0 6px' }}>All-22 &amp; coaches film — detect scene cuts <span className="badge low" style={{ marginLeft: 8 }}>COMING</span></h4>
-        <p className="hint3">On All-22 and end-zone film, each play is its own camera cut. This mode will split the film at those cuts — no game clock required. In progress.</p>
+        <h4 style={{ margin: '0 0 6px' }}>All-22 &amp; coaches film — detect scene cuts</h4>
+        <p className="hint3">On All-22 and end-zone film each play is its own camera cut — no game clock needed. This splits the film at those cuts into individual plays. Lower the sensitivity if it misses cuts; raise it if it finds too many.</p>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <select className="inp" style={{ flex: 1 }} value={film2} disabled={running} onChange={(e) => setFilm2(e.target.value)}>
+            <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+          </select>
+          <label style={{ fontSize: 12, color: 'var(--dim)' }}>sensitivity
+            <select className="inp" style={{ marginLeft: 6 }} value={sens} disabled={running} onChange={(e) => setSens(e.target.value)}>
+              <option value="0.3">high</option><option value="0.4">medium</option><option value="0.5">low</option>
+            </select>
+          </label>
+          <button className="btn primary" disabled={!film2 || running} onClick={() => runJob(() => startDetect({ film_id: Number(film2), threshold: Number(sens) }), setJob2)}>{job2 && job2.status === 'running' ? 'Scanning…' : 'Detect plays'}</button>
+        </div>
+        {job2 && <div className={'job' + (job2.status === 'failed' ? ' bad' : '')}>
+          {job2.message}
+          {job2.status === 'running' && <div>{job2.processed}s of film scanned…</div>}
+        </div>}
       </div>
+      {error && <div className="error" style={{ maxWidth: 720 }}>{error}</div>}
     </div>
   )
 }

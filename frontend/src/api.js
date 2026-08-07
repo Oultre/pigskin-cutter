@@ -40,6 +40,12 @@ export const startAlign = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(j)
+export const startDetect = (body) =>
+  fetch('/api/detect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
 export const getJob = (id) => fetch('/api/jobs/' + id).then(j)
 export const getTagKeys = () => fetch('/api/tag-keys').then(j)
 export const getTagValues = (key) =>
