@@ -337,9 +337,20 @@ def parse(html: str) -> ParsedPBP:
     return result
 
 
-def to_plays(conn, film_id: int, parsed: ParsedPBP, confidence: float = 1.0) -> int:
-    """Insert parsed PBP plays (source='pbp', no cut times yet). Caller commits."""
+def to_plays(conn, film_id: int, parsed: ParsedPBP, confidence: float = 1.0,
+             *, replace: bool = True) -> int:
+    """Insert parsed PBP plays (source='pbp', no cut times yet). Caller commits.
+
+    Idempotent by default: re-importing a game's play-by-play *replaces* the
+    film's existing pbp plays rather than stacking a duplicate set — so a coach
+    who imports twice (or re-imports to fix a mixup) doesn't end up with doubles.
+    """
     from .. import db
+    if replace:
+        conn.execute(
+            "DELETE FROM tags WHERE play_id IN "
+            "(SELECT id FROM plays WHERE film_id = ? AND source = 'pbp')", (film_id,))
+        conn.execute("DELETE FROM plays WHERE film_id = ? AND source = 'pbp'", (film_id,))
     for p in parsed.plays:
         db.insert_play(conn, film_id, p["play_no"], None, None, "pbp", confidence, p["tags"])
     return parsed.count

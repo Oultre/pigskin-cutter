@@ -26,3 +26,19 @@ def test_find_schedule_accepts_a_full_schedule_url(monkeypatch, tmp_path):
     monkeypatch.setattr(pbp, "fetch", fake_fetch)
     pbp.find_schedule("https://example.com/sports/football/schedule/2024", 2024, tmp_path)
     assert seen["url"] == "https://example.com/sports/football/schedule/2024"
+
+
+def test_pbp_import_is_idempotent(tmp_path):
+    # Importing the same game twice must not duplicate plays.
+    from cutup.ingest.pbp import ParsedPBP, to_plays
+    from cutup.library import Library
+    lib = Library.init(tmp_path / "lib")
+    lib.conn.execute("INSERT INTO films (path, label, source_type) VALUES ('g.mp4','G','broadcast')")
+    parsed = ParsedPBP(
+        plays=[{"play_no": i, "tags": {"down": "1", "distance": "10"}} for i in range(1, 11)],
+        teams=["A", "B"], warnings=[])
+    to_plays(lib.conn, 1, parsed); lib.conn.commit()
+    to_plays(lib.conn, 1, parsed); lib.conn.commit()   # re-import
+    n = lib.conn.execute("SELECT COUNT(*) FROM plays WHERE film_id=1 AND source='pbp'").fetchone()[0]
+    assert n == 10   # replaced, not doubled
+    lib.close()
