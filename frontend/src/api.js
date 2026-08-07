@@ -28,6 +28,8 @@ export const importFilm = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(j)
+export const findSchedule = (site, season) =>
+  fetch('/api/pbp/schedule?site=' + encodeURIComponent(site) + '&season=' + season).then(j)
 export const importPbp = (body) =>
   fetch('/api/pbp', {
     method: 'POST',
@@ -47,6 +49,7 @@ export const startDetect = (body) =>
     body: JSON.stringify(body),
   }).then(j)
 export const getJob = (id) => fetch('/api/jobs/' + id).then(j)
+export const getJobs = () => fetch('/api/jobs').then(j)
 export const getTagKeys = () => fetch('/api/tag-keys').then(j)
 export const getTagValues = (key) =>
   fetch('/api/tag-values?key=' + encodeURIComponent(key)).then(j)

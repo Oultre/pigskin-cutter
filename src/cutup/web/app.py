@@ -171,20 +171,33 @@ def _align_job(root: Path, job_id: str, jobs: dict, film_id: int,
     the shared ``jobs`` dict for the UI to poll.
     """
     from .. import align as align_mod
+    from ..ocr import scan as scan_mod
     from ..ocr.scan import load_bundled_glyphs, load_bundled_template, scan_clockmap
 
     job = jobs[job_id]
     lib = None
     try:
         lib = Library.open(root)
-        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (film_id,)).fetchone()
+        row = lib.conn.execute("SELECT path, duration FROM films WHERE id = ?", (film_id,)).fetchone()
         video = resolve_film_path(lib.root, row["path"])
         ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
         ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
+
+        # Auto-match the broadcast's score-bug template (top bar, bottom bar, …)
+        # so the coach never has to know which one to pick.
+        job.update(phase="matching", message="Finding the right clock reader for this broadcast…")
+        package = scan_mod.pick_package(ffmpeg, video, row["duration"])
+        if package is None:
+            job.update(status="failed", phase="done",
+                       message="Couldn't read this broadcast's game clock with any built-in reader — "
+                               "its score bug may be a style we haven't calibrated yet. You can tag "
+                               "the plays by hand instead.")
+            return
         template = load_bundled_template(package)
         glyphs = load_bundled_glyphs(package)
+        who = template.broadcaster or package
 
-        job.update(phase="scanning", message="Reading the score bug…")
+        job.update(phase="scanning", message=f"Reading the {who} score bug…")
 
         def progress(frames, samples):
             job.update(frames=frames, samples=samples)
@@ -456,6 +469,16 @@ def create_app(library_root: Path) -> FastAPI:
                          args=(app.state.library_root, job_id, jobs, body), daemon=True).start()
         return jobs[job_id]
 
+    @app.get("/api/pbp/schedule")
+    def pbp_schedule(site: str, season: int, lib: Library = Depends(get_library)):
+        """Find a team's games (opponent + box-score link) from their site."""
+        games = pbp_mod.find_schedule(site, season, lib.root / "cache")
+        if not games:
+            raise CutupError(
+                "No games found there. Check the school's website address (e.g. "
+                "minesathletics.com) and the season — or paste a box-score link directly below.")
+        return games
+
     @app.post("/api/pbp")
     def import_pbp(body: PBPImport, lib: Library = Depends(get_library)):
         if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (body.film_id,)).fetchone():
@@ -474,17 +497,28 @@ def create_app(library_root: Path) -> FastAPI:
 
     @app.post("/api/align")
     def start_align(body: AlignRequest, lib: Library = Depends(get_library)):
-        row = lib.conn.execute("SELECT path FROM films WHERE id = ?", (body.film_id,)).fetchone()
+        row = lib.conn.execute("SELECT path, duration FROM films WHERE id = ?", (body.film_id,)).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="No such film.")
         if not resolve_film_path(lib.root, row["path"]).exists():
             raise CutupError("Film file not found — is the video in the library folder?")
+        # Fail fast: the game-clock method lines the play-by-play up with the video,
+        # so there's no point scanning a whole game if no PBP has been imported.
+        pbp = lib.conn.execute(
+            "SELECT COUNT(*) c FROM plays WHERE film_id = ? AND source = 'pbp'", (body.film_id,)
+        ).fetchone()["c"]
+        if not pbp:
+            raise CutupError(
+                "Import play-by-play for this film first (use Data Grab), then Auto-align. "
+                "The game-clock method places those plays onto the video — with no play-by-play "
+                "there's nothing to place. For All-22/coaches film without a clock, use scene detect below.")
         jobs = app.state.jobs
         if any(j["status"] == "running" for j in jobs.values()):
             raise HTTPException(status_code=409, detail="An alignment job is already running.")
         job_id = uuid.uuid4().hex[:8]
-        jobs[job_id] = {"id": job_id, "film_id": body.film_id, "status": "running",
+        jobs[job_id] = {"id": job_id, "kind": "align", "film_id": body.film_id, "status": "running",
                         "phase": "starting", "frames": 0, "samples": 0, "placed": 0,
+                        "total": row["duration"] or 0,
                         "message": "Starting…", "started": datetime.now().isoformat(timespec="seconds")}
         threading.Thread(
             target=_align_job,

@@ -1,0 +1,20 @@
+{
+  "note": "Ground-truth reads from CSM v SDM 2023 (RMAC Network bottom bar), read from frames by eye, for glyph calibration. Regenerate: cutup ocr calibrate --package rmac-2023 --video <CSU v SDM 23.mp4>.",
+  "frames": [
+    {"t": 950,  "quarter": "1", "game_clock": "14:18", "play_clock": "40"},
+    {"t": 1100, "quarter": "1", "game_clock": "12:25", "play_clock": "40"},
+    {"t": 1300, "quarter": "1", "game_clock": "10:55", "play_clock": "31"},
+    {"t": 1500, "quarter": "1", "game_clock": "8:29",  "play_clock": "40"},
+    {"t": 1700, "quarter": "1", "game_clock": "5:09",  "play_clock": "40"},
+    {"t": 2100, "quarter": "1", "game_clock": "2:34",  "play_clock": "40"},
+    {"t": 2800, "quarter": "2", "game_clock": "13:02", "play_clock": "40"},
+    {"t": 3100, "quarter": "2", "game_clock": "10:07", "play_clock": "27"},
+    {"t": 3500, "quarter": "2", "game_clock": "8:04",  "play_clock": "40"},
+    {"t": 3800, "quarter": "2", "game_clock": "7:23",  "play_clock": "24"},
+    {"t": 4300, "quarter": "2", "game_clock": "3:24",  "play_clock": "23"},
+    {"t": 7000, "quarter": "3", "game_clock": "11:26", "play_clock": "25"},
+    {"t": 7500, "quarter": "3", "game_clock": "9:45",  "play_clock": "25"},
+    {"t": 8000, "quarter": "3", "game_clock": "6:22",  "play_clock": "16"},
+    {"t": 8700, "quarter": "3", "game_clock": "0:33",  "play_clock": "25"}
+  ]
+}

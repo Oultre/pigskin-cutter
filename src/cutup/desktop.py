@@ -80,6 +80,42 @@ class DesktopApi:
         return result[0] if isinstance(result, (list, tuple)) else result
 
 
+def _install_drag_drop(window) -> None:
+    """Deliver the real path of a dropped film to the page.
+
+    A webview hides a dropped file's path from page JavaScript (browser security).
+    pywebview exposes it to a *Python* drop handler as ``pywebviewFullPath``; we
+    grab that and dispatch a ``pkfilmdrop`` event into the page carrying the path,
+    which the Film Library listens for.
+    """
+    import json
+
+    from webview.dom import DOMEventHandler
+
+    VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".m4v", ".ts", ".wmv")
+
+    def on_drop(event):
+        try:
+            files = (event.get("dataTransfer") or {}).get("files") or []
+            for f in files:
+                path = f.get("pywebviewFullPath")
+                if path and path.lower().endswith(VIDEO_EXTS):
+                    window.evaluate_js(
+                        "window.dispatchEvent(new CustomEvent('pkfilmdrop',{detail:"
+                        + json.dumps(path) + "}))")
+                    break
+        except Exception:
+            pass
+
+    try:
+        window.events.loaded.wait()
+        # dragover must accept the drag for a drop to fire; drop carries the path.
+        window.dom.document.events.dragover += DOMEventHandler(lambda e: None, prevent_default=True)
+        window.dom.document.events.drop += DOMEventHandler(on_drop, prevent_default=True)
+    except Exception:
+        pass  # drag-drop is a convenience; Browse still works if this fails
+
+
 def run_window(url: str, on_close=None, library_root=None) -> None:
     """Open the app in a native window and block until the user closes it.
 
@@ -90,13 +126,13 @@ def run_window(url: str, on_close=None, library_root=None) -> None:
     import webview
 
     api = DesktopApi(library_root)
-    webview.create_window(WINDOW_TITLE, url, js_api=api,
-                          width=1280, height=860, min_size=(900, 600))
+    window = webview.create_window(WINDOW_TITLE, url, js_api=api,
+                                   width=1280, height=860, min_size=(900, 600))
     try:
-        webview.start(icon=find_app_icon())
+        webview.start(_install_drag_drop, window, icon=find_app_icon())
     except TypeError:
         # older pywebview without the icon kwarg
-        webview.start()
+        webview.start(_install_drag_drop, window)
     finally:
         if on_close is not None:
             on_close()

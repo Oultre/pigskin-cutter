@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
   getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
-  deleteFilm, importFilm, importPbp, startAlign, startDetect, getJob, getExportSizes, startReel,
+  deleteFilm, importFilm, importPbp, findSchedule, startAlign, startDetect, getJob, getJobs, getExportSizes, startReel,
 } from './api.js'
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
@@ -272,7 +272,18 @@ function PlaysScreen({ films, filmId, tagKeys, presets, sizes, refreshPresets, s
 
         <div>
           <div className="sheet">
-            {plays.length === 0 && <div className="sheet-empty">No plays match. Try “All plays” or a different film.</div>}
+            {plays.length === 0 && (
+              <div className="sheet-empty">
+                <div style={{ fontSize: 15, color: 'var(--muted)' }}>No plays here yet.</div>
+                <div className="hint2">Get plays onto this film, then come back to cut and export them:</div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                  <button className="btn" onClick={() => nav('tag')}>✋ Mark plays by hand</button>
+                  <button className="btn" onClick={() => nav('detect')}>⚡ Auto Detect</button>
+                  <button className="btn" onClick={() => nav('data')}>📋 Data Grab</button>
+                </div>
+                <div className="hint2" style={{ marginTop: 10 }}>…or pick a different film, or the “All plays” chip above.</div>
+              </div>
+            )}
             {plays.map((p) => (
               <PlayCard key={p.id} p={p} selected={selected.has(p.id)} active={active?.id === p.id}
                 onOpen={() => setActive(p)} onToggle={() => toggleSel(p.id)} />
@@ -500,6 +511,17 @@ function DataGrab({ films, filmId, onChanged, flash, nav }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  // find-a-game
+  const [site, setSite] = useState('')
+  const [season, setSeason] = useState('2024')
+  const [games, setGames] = useState(null)
+  const [finding, setFinding] = useState(false)
+
+  const find = async () => {
+    setFinding(true); setError(''); setGames(null)
+    try { setGames(await findSchedule(site, Number(season))) }
+    catch (e) { setError(e.message) } finally { setFinding(false) }
+  }
   const run = async (dry) => {
     setBusy(true); setResult(null); setError('')
     try {
@@ -510,11 +532,29 @@ function DataGrab({ films, filmId, onChanged, flash, nav }) {
   return (
     <div className="screen">
       <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span>
-        <h2>Data Grab <span className="count">· NFL &amp; college play-by-play</span></h2></div>
+        <h2>Data Grab <span className="count">· college play-by-play</span></h2></div>
       <div className="steps">
-        <Step n="1" h="Pick the game" hint="Paste the box-score link from the athletics site (fetched once, then saved).">
+        <Step n="1" h="Find your game" hint="Enter a college's athletics website and season, then pick the game — no link to hunt down.">
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <input className="inp" style={{ flex: 2, minWidth: 200 }} value={site} onChange={(e) => setSite(e.target.value)}
+              placeholder="school website, e.g. minesathletics.com" onKeyDown={(e) => e.key === 'Enter' && site && find()} />
+            <input className="inp" style={{ width: 90 }} value={season} onChange={(e) => setSeason(e.target.value)} placeholder="season" />
+            <button className="btn" disabled={finding || !site} onClick={find}>{finding ? 'Finding…' : 'Find games'}</button>
+          </div>
+          <div className="hint2">Works for most <b>college</b> programs (their sites run on the Sidearm platform). Not high-school or pro sites — for those, paste the box-score link below if you have one.</div>
+          {games && games.length > 0 && (
+            <div className="presets" style={{ marginTop: 12 }}>
+              {games.map((g) => (
+                <span key={g.box_id} className={'chip' + (source === g.url ? ' on' : '')} onClick={() => setSource(g.url)}>
+                  vs {g.opponent}
+                </span>
+              ))}
+            </div>
+          )}
+          {games && games.length === 0 && <div className="hint2">No games found — check the spelling and season. This school's site may not be a supported (Sidearm) one; if so, paste a box-score link below.</div>}
+          <label className="fld">or paste a box-score link</label>
           <input className="inp" style={{ width: '100%' }} value={source} onChange={(e) => setSource(e.target.value)}
-            placeholder="https://…athletics.com/…/boxscore/25444" />
+            placeholder="https://…athletics.com/…/boxscore/24148" />
         </Step>
         <Step n="2" h="Attach it to a film" hint="The plays line up on this film's timeline once imported.">
           <select className="inp" value={film} onChange={(e) => setFilm(e.target.value)}>
@@ -548,19 +588,32 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
   const [job, setJob] = useState(null)      // clock job
   const [job2, setJob2] = useState(null)    // scene job
   const [error, setError] = useState('')
-  const poll = useRef(null)
-  useEffect(() => () => clearInterval(poll.current), [])
+  const polls = useRef({})
+  useEffect(() => () => Object.values(polls.current).forEach(clearInterval), [])
 
+  const watch = (id, setter) => {
+    clearInterval(polls.current[id])
+    polls.current[id] = setInterval(async () => {
+      try {
+        const u = await getJob(id); setter(u)
+        if (u.status !== 'running') { clearInterval(polls.current[id]); if (u.status === 'done') { onChanged(); flash(u.message) } }
+      } catch { clearInterval(polls.current[id]) }
+    }, 2000)
+  }
   const runJob = (starter, setter) => {
     setError(''); setter(null)
-    starter().then((j) => {
-      setter(j)
-      poll.current = setInterval(async () => {
-        try { const u = await getJob(j.id); setter(u); if (u.status !== 'running') { clearInterval(poll.current); if (u.status === 'done') { onChanged(); flash(u.message) } } }
-        catch { clearInterval(poll.current) }
-      }, 2000)
-    }).catch((e) => setError(e.message))
+    starter().then((j) => { setter(j); watch(j.id, setter) }).catch((e) => setError(e.message))
   }
+  // Reconnect to a job still running from a previous visit, so its progress
+  // reappears instead of looking like nothing happened.
+  useEffect(() => {
+    getJobs().then((all) => {
+      const r = all.find((j) => j.status === 'running')
+      if (!r) return
+      if (r.kind === 'detect') { setJob2(r); watch(r.id, setJob2) }
+      else if (r.kind === 'align') { setJob(r); watch(r.id, setJob) }
+    }).catch(() => {})
+  }, [])
   const running = (job && job.status === 'running') || (job2 && job2.status === 'running')
   return (
     <div className="screen">
@@ -577,7 +630,8 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
         </div>
         {job && <div className={'job' + (job.status === 'failed' ? ' bad' : '')}>
           <b>{job.phase}</b> — {job.message}
-          {job.status === 'running' && <div>{job.frames} frames read · {job.samples} clock reads</div>}
+          {job.status === 'running' && job.total > 0 && <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.min(100, Math.round(100 * job.frames / job.total))}%` }} /></div>}
+          {job.status === 'running' && <div>{Math.round(job.frames)}s of {Math.round(job.total)}s of film scanned · {job.samples} clock reads</div>}
         </div>}
       </div>
 
@@ -622,6 +676,13 @@ function FilmLibrary({ films, onChanged, flash, nav }) {
   const refresh = () => getLibraryFilms().then(setAvailable).catch(() => {})
   useEffect(() => { refresh(); getSourceTypes().then(setSourceTypes).catch(() => {}) }, [films])
   useEffect(() => () => clearInterval(poll.current), [])
+  // A dropped film's real path arrives from the desktop app via this event
+  // (the webview hides it from a normal drop). See desktop._install_drag_drop.
+  useEffect(() => {
+    const onDrop = (e) => { setHot(false); if (e.detail) setPath(e.detail) }
+    window.addEventListener('pkfilmdrop', onDrop)
+    return () => window.removeEventListener('pkfilmdrop', onDrop)
+  }, [])
 
   const isAbsolute = (p) => /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p)
 
@@ -656,13 +717,10 @@ function FilmLibrary({ films, onChanged, flash, nav }) {
     if (!hasNative) return
     try { const picked = await window.pywebview.api.pick_film(); if (picked) setPath(picked) } catch (e) { setError(String(e)) }
   }
-  const onDrop = (e) => {
-    e.preventDefault(); setHot(false)
-    const f = e.dataTransfer.files && e.dataTransfer.files[0]
-    // pywebview exposes the real filesystem path; browsers do not.
-    const p = f && (f.path || f.name)
-    if (p) setPath(p)
-  }
+  // The real dropped path can't be read from the browser drop event (security);
+  // the desktop app delivers it via the 'pkfilmdrop' event handled above. Here we
+  // just accept the drag and clear the hover state.
+  const onDrop = (e) => { e.preventDefault(); setHot(false) }
 
   return (
     <div className="screen">

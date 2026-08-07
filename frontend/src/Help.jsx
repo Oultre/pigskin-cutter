@@ -81,10 +81,14 @@ export default function Help() {
 
       <section>
         <h2>Data Grab — official play-by-play</h2>
-        <p>For a college or NFL game, <b>Data Grab</b> can pull the official play list from the
-          athletics site: paste the game&rsquo;s box-score link, pick which film it belongs to, and it
-          fills in every play&rsquo;s down, distance, and result. The plays come in without cut times —
-          run <b>Auto Detect</b> to line them up on the video.</p>
+        <p><b>Data Grab</b> pulls the official play list for a game so you don&rsquo;t have to chart it.
+          Type a college&rsquo;s athletics website (like <i>minesathletics.com</i>) and the season, click
+          <b> Find games</b>, and pick your game from the list — it fills in every play&rsquo;s down,
+          distance, and result. (No link to hunt down.)</p>
+        <p className="tip">This works for most <b>college</b> teams — their athletics sites all run on
+          the same platform (Sidearm). It does <b>not</b> work for high-school or pro sites. If your
+          school isn&rsquo;t found, you can still paste a box-score link directly.</p>
+        <p>The plays come in without cut times — run <b>Auto Detect</b> to line them up on the video.</p>
       </section>
 
       <section>

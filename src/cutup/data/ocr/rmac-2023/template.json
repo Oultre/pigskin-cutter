@@ -1,0 +1,12 @@
+{
+  "name": "rmac-2023",
+  "broadcaster": "RMAC Network",
+  "season": "2023",
+  "note": "Bottom-center score bar (RMAC Network 2023 production). Region boxes are fractions of the full 1080p frame. Calibrated from CSM v SDM 2023. The 2024 production used a top-center bar (see rmac-2024).",
+  "regions": [
+    {"name": "quarter",       "x": 0.562, "y": 0.893, "w": 0.016, "h": 0.048, "polarity": "light", "whitelist": "0123456789"},
+    {"name": "game_clock",    "x": 0.600, "y": 0.893, "w": 0.062, "h": 0.048, "polarity": "light", "whitelist": "0123456789:"},
+    {"name": "play_clock",    "x": 0.688, "y": 0.893, "w": 0.037, "h": 0.048, "polarity": "light", "whitelist": "0123456789"},
+    {"name": "down_distance", "x": 0.730, "y": 0.893, "w": 0.090, "h": 0.048, "polarity": "light", "whitelist": null}
+  ]
+}

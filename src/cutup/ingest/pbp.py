@@ -34,6 +34,48 @@ _MIN_INTERVAL = 2.0   # seconds between network fetches (politeness)
 # -- fetch / cache ---------------------------------------------------------
 
 
+_BOXSCORE_RE = re.compile(
+    r"/sports/football/stats/(\d{4})/([a-z0-9][a-z0-9\-]*)/boxscore/(\d+)", re.I)
+
+
+def find_schedule(site: str, season: int, cache_root: Path, *, refetch: bool = False) -> list[dict]:
+    """Find a team's games (with box-score links) for a season from their site.
+
+    College athletics sites (Sidearm) publish a season schedule page that links
+    to each game's box score. Given the school's site (a domain like
+    ``minesathletics.com`` or a full schedule URL) and a season, this returns the
+    games — opponent and the box-score URL the play-by-play importer consumes.
+
+    Opponent and year are read from the box-score URL itself (which encodes both),
+    so this doesn't depend on the page's exact HTML layout.
+    """
+    s = site.strip().rstrip("/")
+    if "/sports/" in s or "/schedule" in s:
+        sched_url = s if s.startswith("http") else "https://" + s
+    else:
+        if not s.startswith("http"):
+            s = "https://" + s
+        sched_url = f"{s}/sports/football/schedule/{season}"
+
+    html = fetch(sched_url, cache_root, refetch=refetch)
+    from urllib.parse import urlparse
+    p = urlparse(sched_url)
+    base = f"{p.scheme}://{p.netloc}"
+
+    games: dict[str, dict] = {}
+    for m in _BOXSCORE_RE.finditer(html):
+        year, slug, box_id = m.group(1), m.group(2), m.group(3)
+        if int(year) != season or box_id in games:
+            continue
+        games[box_id] = {
+            "opponent": slug.replace("-", " ").title(),
+            "season": int(year),
+            "box_id": box_id,
+            "url": base + m.group(0),
+        }
+    return list(games.values())
+
+
 def fetch(source: str, cache_root: Path, *, refetch: bool = False) -> str:
     """Return the HTML for a PBP page. A local file path is read directly; a URL
     is fetched once and cached under ``<cache_root>/pbp/``.

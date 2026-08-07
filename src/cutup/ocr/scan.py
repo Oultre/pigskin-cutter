@@ -49,6 +49,62 @@ def load_bundled_glyphs(package: str) -> GlyphSet:
         return GlyphSet.load_npz(f)
 
 
+def list_bundled_packages() -> list[str]:
+    """Names of every bundled OCR package (a template + glyphs pair)."""
+    names = []
+    try:
+        for entry in files("cutup.data").joinpath("ocr").iterdir():
+            if (entry.is_dir() and entry.joinpath("template.json").is_file()
+                    and entry.joinpath("glyphs.npz").is_file()):
+                names.append(entry.name)
+    except Exception:
+        pass
+    return sorted(names)
+
+
+def _probe_reads(ffmpeg: str, video: Path, package: str, times: list[float]) -> int:
+    """How many of ``times`` this package reads a valid game clock from."""
+    tpl = load_bundled_template(package)
+    gc = tpl.region("game_clock")
+    glyphs = load_bundled_glyphs(package)
+    hits = 0
+    for t in times:
+        try:
+            frame = extract_frame(ffmpeg, video, t)
+            text, conf = read_region(_crop_region(frame, gc), glyphs,
+                                     whitelist=gc.whitelist, polarity=gc.polarity)
+            if text and ":" in text and conf > 0.6:
+                hits += 1
+        except Exception:
+            pass
+    return hits
+
+
+def pick_package(ffmpeg: str, video: Path, duration: float | None,
+                 packages: list[str] | None = None, n: int = 10) -> str | None:
+    """Choose the bundled package whose score-bug template this film matches.
+
+    Different broadcasts put the bar in different places (top vs bottom, etc.),
+    so we probe each bundled template on a spread of frames and pick whichever
+    actually reads the clock — the coach never has to know which is which.
+    Returns ``None`` if no bundled template reads this film's clock.
+    """
+    packages = packages or list_bundled_packages()
+    if not packages:
+        return None
+    if len(packages) == 1:
+        return packages[0]
+    dur = duration or 3600.0
+    lo, hi = dur * 0.1, dur * 0.7          # sample the meat of the game
+    times = [lo + (hi - lo) * i / (n - 1) for i in range(n)]
+    best, best_hits = None, 0
+    for pkg in packages:
+        hits = _probe_reads(ffmpeg, video, pkg, times)
+        if hits > best_hits:
+            best, best_hits = pkg, hits
+    return best
+
+
 # -- frame helpers ---------------------------------------------------------
 
 
@@ -182,24 +238,39 @@ def scan_clockmap(ffmpeg, ffprobe, video, template, glyphs, *, start=0.0, end=No
     span = (end - start) / workers
     ranges = [(start + i * span, start + (i + 1) * span) for i in range(workers)]
 
+    import threading
+
     all_samples, all_pc = [], []
     total = {"frames_read": 0, "clock_samples": 0}
-    done = {"n": 0}
+    lock = threading.Lock()
+    per = [(0, 0)] * workers        # (frames_read, clock_samples) per worker, live
 
-    def _run(r):
+    def _run(item):
+        idx, r = item
+
+        def worker_progress(read, kept):
+            # Report the running total across all workers, so the bar advances
+            # smoothly instead of jumping only as each section finishes.
+            with lock:
+                per[idx] = (read, kept)
+                tr = sum(a for a, _ in per)
+                tk = sum(b for _, b in per)
+            if progress:
+                progress(tr, tk)
+
         return _scan_samples(ffmpeg, ffprobe, video, template, glyphs,
-                             start=r[0], end=r[1], fps=fps, conf_floor=conf_floor, W=W, H=H)
+                             start=r[0], end=r[1], fps=fps, conf_floor=conf_floor,
+                             W=W, H=H, progress=worker_progress)
 
     with cf.ThreadPoolExecutor(max_workers=workers) as pool:
-        for samples, pc, stats in pool.map(_run, ranges):
+        for samples, pc, stats in pool.map(_run, list(enumerate(ranges))):
             all_samples.extend(samples)
             all_pc.extend(pc)
             total["frames_read"] += stats["frames_read"]
             total["clock_samples"] += stats["clock_samples"]
-            done["n"] += 1
-            if progress:
-                progress(total["frames_read"], total["clock_samples"])
 
+    if progress:
+        progress(total["frames_read"], total["clock_samples"])
     all_pc.sort(key=lambda p: p[0])
     return ClockMap.from_samples(all_samples), all_pc, total
 
