@@ -1,7 +1,8 @@
 import pytest
 
 from cutup.align import (
-    AlignPlay, Placement, estimate_snaps, refine_placements, refine_snap, to_cut_times,
+    AlignPlay, Placement, align_to_snaps, detect_snaps, estimate_snaps,
+    refine_placements, refine_snap, to_cut_times,
 )
 from cutup.ocr.clockmap import ClockMap, ClockSample
 
@@ -84,6 +85,40 @@ def test_refine_placements_keeps_estimate_when_no_reset_nearby():
     series = [(80, 20), (81, 40)]                       # reset far outside the window
     refine_placements(placements, series, window=8)
     assert placements[0].video_sec == pytest.approx(40.0) and placements[0].method == "drive_map"
+
+
+def test_detect_snaps_finds_reset_edges():
+    # two plays: play clock counts down, resets to 40 and holds (the snap), twice
+    series = [(10, 25), (11, 20), (12, 15), (13, 10), (14, 5),
+              (15, 40), (16, 40), (17, 40),            # snap 1 @15
+              (40, 25), (41, 18), (42, 10), (43, 3),
+              (44, 40), (45, 40), (46, 40)]            # snap 2 @44
+    assert detect_snaps(series) == [15, 44]
+
+
+def test_detect_snaps_ignores_a_lone_ocr_spike():
+    # a single-frame 40 during a camera cut (not held) is not a snap; the held one is
+    series = [(10, 20), (11, 19), (12, 40), (13, 5), (14, 4),   # spike @12, not held
+              (15, 3), (16, 40), (17, 40), (18, 40)]            # real reset @16
+    assert detect_snaps(series) == [16]
+
+
+def test_align_to_snaps_assigns_plays_to_consecutive_snaps():
+    # snaps for drive 1's 3 plays and drive 2's 2 plays (each a held reset to 40)
+    series = []
+    for t in (5, 45, 85, 125, 165):
+        series += [(t - 2, 5), (t, 40), (t + 1, 40), (t + 2, 40)]
+    by = {p.play_no: p for p in align_to_snaps(_map(), _plays(), series)}
+    assert [round(by[i].video_sec) for i in range(1, 6)] == [5, 45, 85, 125, 165]
+    assert by[1].method == "snap_seq" and by[4].method == "snap_seq"
+
+
+def test_align_to_snaps_falls_back_when_snaps_missing():
+    # only one snap detected for drive 1's three plays: play 1 snaps, 2 & 3 fall back
+    series = [(5, 5), (6, 40), (7, 40), (8, 40)]
+    by = {p.play_no: p for p in align_to_snaps(_map(), _plays(), series)}
+    assert round(by[1].video_sec) == 6 and by[1].method == "snap_seq"
+    assert by[2].method == "drive_map" and by[3].method == "drive_map"
 
 
 def test_refine_placements_no_playclock_is_a_noop():

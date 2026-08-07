@@ -89,6 +89,86 @@ def estimate_snaps(clockmap: ClockMap, plays: list[AlignPlay],
     return sorted(placements, key=lambda pl: pl.play_no)
 
 
+def detect_snaps(playclock_series, high: int = 38, low: int = 30,
+                 min_gap: float = 6.0) -> list[float]:
+    """Every snap in the film, from the play clock resetting to ~40.
+
+    In this broadcast the play clock counts down pre-snap, then jumps back up to
+    40 the instant the ball is snapped (and the game clock starts). So a *rising
+    edge* into a fresh 40 — from a lower, counting-down value — marks one snap,
+    once per play. Returns the snap video-seconds, sorted. Implausible reads
+    (>45) and edges closer together than ``min_gap`` are ignored as noise.
+    """
+    series = sorted((v, pc) for v, pc in playclock_series if pc is not None and 0 <= pc <= 45)
+    snaps: list[float] = []
+    prev: int | None = None
+    n = len(series)
+    for i, (v, pc) in enumerate(series):
+        # a real reset rises into ~40 from a counting-down value (prev <= low) and
+        # then *holds* high; a lone OCR spike during a camera cut does not.
+        if pc >= high and prev is not None and prev <= low:
+            hold = sum(1 for k in range(i, min(i + 3, n)) if series[k][1] >= high)
+            if hold >= 2 and (not snaps or v - snaps[-1] >= min_gap):
+                snaps.append(v)
+        prev = pc
+    return snaps
+
+
+def align_to_snaps(clockmap: ClockMap, plays: list[AlignPlay], playclock_series,
+                   snap_gap: float = 30.0, tol: float = 12.0) -> list[Placement]:
+    """Place plays by assigning each drive's plays to *consecutive* real snaps.
+
+    The clock map anchors each drive (its clock is known only per drive, not per
+    play). Within the drive we then hand the plays, in order, to the sequence of
+    detected snaps (:func:`detect_snaps`) in that drive's video window — so play
+    N lands on the Nth snap of the drive, not merely near a clock estimate. Plays
+    past the last detected snap fall back to even spacing (method ``drive_map``).
+    """
+    plays = sorted(plays, key=lambda p: p.play_no)
+    drive_order: list[int] = []
+    for p in plays:
+        if p.drive is not None and p.drive not in drive_order:
+            drive_order.append(p.drive)
+
+    start_video: dict[int, float | None] = {}
+    for d in drive_order:
+        anchor = next(p for p in plays if p.drive == d)
+        if anchor.quarter is not None and anchor.drive_clock:
+            try:
+                start_video[d] = clockmap.video_time_for(anchor.quarter, parse_clock(anchor.drive_clock))
+            except Exception:
+                start_video[d] = None
+        else:
+            start_video[d] = None
+
+    snaps = detect_snaps(playclock_series)
+    placements: list[Placement] = []
+
+    for i, d in enumerate(drive_order):
+        dplays = [p for p in plays if p.drive == d]
+        start = start_video[d]
+        if start is None:
+            for p in dplays:
+                placements.append(Placement(p.play_no, None, "unplaced",
+                                            "drive clock outside the clock map"))
+            continue
+        nxt = next((start_video[drive_order[j]] for j in range(i + 1, len(drive_order))
+                    if start_video[drive_order[j]] is not None), None)
+        upper = nxt if nxt is not None else start + snap_gap * len(dplays) + tol
+        window = [s for s in snaps if start - tol <= s < upper]
+        step = ((nxt - start) / len(dplays)) if (nxt and nxt > start and len(dplays) > 1) else snap_gap
+        for j, p in enumerate(dplays):
+            if j < len(window):
+                placements.append(Placement(p.play_no, window[j], "snap_seq"))
+            else:
+                placements.append(Placement(p.play_no, start + j * step, "drive_map"))
+
+    for p in plays:
+        if p.drive is None:
+            placements.append(Placement(p.play_no, None, "unplaced", "no drive info"))
+    return sorted(placements, key=lambda pl: pl.play_no)
+
+
 def refine_snap(estimate: float, playclock_series, window: float = 6.0,
                 reset_jump: int = 15) -> tuple[float, bool]:
     """Land the exact snap using the play-clock reset near ``estimate``.
