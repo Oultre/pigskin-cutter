@@ -75,6 +75,19 @@ class AlignRequest(BaseModel):
     end: Optional[float] = None
 
 
+class ReelRequest(BaseModel):
+    out: Optional[str] = None            # output file; defaults to <library>/reels/…
+    where: list[str] = []
+    film: Optional[int] = None
+    source: Optional[str] = None
+    min_confidence: Optional[float] = None
+    confirmed_only: bool = False
+    play_ids: Optional[list[int]] = None  # explicit selection (from the grid) wins over the filter
+    title: Optional[str] = None
+    label: bool = False
+    size: Optional[str] = None
+
+
 class PBPImport(BaseModel):
     film_id: int
     source: str                 # box-score URL or a server-side .html path
@@ -212,6 +225,81 @@ def _align_job(root: Path, job_id: str, jobs: dict, film_id: int,
             lib.close()
 
 
+def _reel_job(root: Path, job_id: str, jobs: dict, req: "ReelRequest", out: Path) -> None:
+    """Stitch the selected plays into one reel, in a background thread."""
+    from .. import reel as reel_mod
+    from ..ingest import probe as probe_mod
+
+    job = jobs[job_id]
+    lib = None
+    try:
+        lib = Library.open(root)
+        if req.play_ids:
+            placeholders = ",".join("?" for _ in req.play_ids)
+            rows = lib.conn.execute(
+                f"SELECT p.*, f.path AS film_path, f.label AS film_label, "
+                f"f.source_type AS film_source_type FROM plays p JOIN films f ON f.id = p.film_id "
+                f"WHERE p.id IN ({placeholders}) ORDER BY p.film_id, p.play_no", req.play_ids
+            ).fetchall()
+        else:
+            predicates = [filters_mod.parse_where(w) for w in req.where]
+            query, params = filters_mod.build_query(
+                predicates, film_id=req.film, source=req.source,
+                min_confidence=req.min_confidence, confirmed_only=req.confirmed_only)
+            rows = lib.conn.execute(query, params).fetchall()
+        timed = [r for r in rows if r["t_start"] is not None and r["t_end"] is not None]
+        if not timed:
+            job.update(status="failed", phase="done",
+                       message="No timed plays selected — nothing to stitch into a reel.")
+            return
+
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
+        size = sizes_mod.get_size(req.size)
+        profile = reel_mod.HouseProfile.from_size(size)
+        font = reel_mod.find_font()
+        warnings = []
+        if (req.title or req.label) and not font:
+            warnings.append("No font found — building without slate/labels.")
+
+        audio_by_film: dict[str, bool] = {}
+        segments = []
+        for r in timed:
+            film_abs = resolve_film_path(lib.root, r["film_path"])
+            key = str(film_abs)
+            if key not in audio_by_film:
+                audio_by_film[key] = probe_mod.has_audio(ffprobe, film_abs)
+            lbl = None
+            if req.label and font:
+                t = _tags(lib.conn, r["id"])
+                dd = f"{t.get('down','')}&{t.get('distance','')}".strip("&")
+                lbl = f"#{r['play_no']}  {dd}".strip()
+            segments.append(reel_mod.ReelSegment(
+                play_no=r["play_no"], film_abs=film_abs,
+                t_in=max(r["t_start"] - lib.config.pre_roll, 0.0),
+                t_out=r["t_end"] + lib.config.post_roll,
+                has_audio=audio_by_film[key], label=lbl))
+
+        job.update(phase="stitching", total=len(segments), done=0,
+                   message=f"Normalizing {len(segments)} plays…")
+
+        def progress(done, total):
+            job.update(done=done, total=total)
+
+        plan = reel_mod.ReelPlan(segments=segments, profile=profile,
+                                 title=req.title if font else None, font=font, warnings=warnings)
+        reel_mod.build_reel(ffmpeg, plan, out, progress=progress)
+        job.update(status="done", phase="done", output=str(out), count=len(segments),
+                   message=f"Reel ready: {len(segments)} plays -> {out.name}",
+                   warnings=warnings)
+    except Exception as exc:
+        job.update(status="failed", phase="done", message=str(exc))
+    finally:
+        job["finished"] = datetime.now().isoformat(timespec="seconds")
+        if lib is not None:
+            lib.close()
+
+
 def create_app(library_root: Path) -> FastAPI:
     app = FastAPI(title="Pigskin Cutter", docs_url="/api/docs")
     app.state.library_root = Path(library_root)
@@ -303,6 +391,30 @@ def create_app(library_root: Path) -> FastAPI:
         threading.Thread(
             target=_align_job,
             args=(app.state.library_root, job_id, jobs, body.film_id, body.package, body.start, body.end),
+            daemon=True,
+        ).start()
+        return jobs[job_id]
+
+    @app.post("/api/reel")
+    def start_reel(body: ReelRequest, lib: Library = Depends(get_library)):
+        jobs = app.state.jobs
+        if any(j["status"] == "running" for j in jobs.values()):
+            raise HTTPException(status_code=409, detail="A job is already running.")
+        if body.out:
+            out = Path(body.out)
+            if not out.is_absolute():
+                out = lib.root / out
+        else:
+            reels = lib.root / "reels"
+            reels.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            out = reels / f"reel-{stamp}.mp4"
+        job_id = uuid.uuid4().hex[:8]
+        jobs[job_id] = {"id": job_id, "kind": "reel", "status": "running",
+                        "phase": "starting", "done": 0, "total": 0,
+                        "message": "Starting…", "started": datetime.now().isoformat(timespec="seconds")}
+        threading.Thread(
+            target=_reel_job, args=(app.state.library_root, job_id, jobs, body, out),
             daemon=True,
         ).start()
         return jobs[job_id]

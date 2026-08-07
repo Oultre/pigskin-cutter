@@ -75,6 +75,16 @@ export const postExport = (body) =>
   }).then(j)
 
 export const streamUrl = (filmId) => '/api/film/' + filmId + '/stream'
+export const thumbUrl = (playId) => '/api/play/' + playId + '/thumb'
+
+export const getExportSizes = () => fetch('/api/export-sizes').then(j)
+export const seedPresets = () => fetch('/api/presets/seed', { method: 'POST' }).then(j)
+export const startReel = (body) =>
+  fetch('/api/reel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
 
 export const getPresets = () => fetch('/api/presets').then(j)
 export const savePreset = (body) =>

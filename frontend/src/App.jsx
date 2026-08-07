@@ -1,41 +1,36 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl,
-  getPresets, savePreset, deletePreset, exportPresets, importPresets,
-  getSourceTypes, getLibraryFilms, registerFilm, deleteFilm, importPbp,
-  startAlign, getJob,
+  getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
+  getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
+  deleteFilm, importPbp, startAlign, getJob, getExportSizes, startReel,
 } from './api.js'
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
 const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
-
 const SOURCE_LABELS = {
-  hudl_clip: 'Hudl clips (pre-cut)',
-  hudl_game: 'Hudl game film',
-  broadcast: 'TV broadcast',
-  all22: 'All-22 (NFL / NCAA)',
-  drone: 'Drone (DJI)',
+  hudl_clip: 'Hudl clips (pre-cut)', hudl_game: 'Hudl game film', broadcast: 'TV broadcast',
+  all22: 'All-22 (NFL / NCAA)', drone: 'Drone (DJI)',
 }
 const sourceLabel = (s) => SOURCE_LABELS[s] || s
 
 function fmt(t) {
   if (t === null || t === undefined) return '—'
   const s = Math.max(0, t)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
   const p = (n, w = 2) => String(n).padStart(w, '0')
   return `${p(h)}:${p(m)}:${sec.toFixed(1).padStart(4, '0')}`
 }
-
-// -- filter <-> preset conversions (canonical filter shape shared with the CLI)
-
-function predToWhere(p) {
-  if (p.op === 'exists') return `${p.key} exists`
-  return `${p.key}${p.op}${p.value}`
+const ddText = (p) => {
+  const d = p.tags.down, dist = p.tags.distance
+  if (d && dist) return `${d} & ${dist}`
+  if (p.tags.play_type) return p.tags.play_type
+  return p.play_no != null ? `Play ${p.play_no}` : 'Play'
 }
+
+// -- filter <-> preset shape (shared with the CLI) --------------------------
+function predToWhere(p) { return p.op === 'exists' ? `${p.key} exists` : `${p.key}${p.op}${p.value}` }
 function whereToPred(w) {
   const ex = w.match(/^(.+?)\s+exists\s*$/i)
   if (ex) return { key: ex[1].trim(), op: 'exists', value: '' }
@@ -56,390 +51,541 @@ function filterToForm(f) {
   return {
     preds: (f.where || []).map(whereToPred),
     film: f.film != null ? String(f.film) : '',
-    source: f.source || '',
-    minConf: f.min_confidence != null ? String(f.min_confidence) : '',
+    source: f.source || '', minConf: f.min_confidence != null ? String(f.min_confidence) : '',
     confirmedOnly: !!f.confirmed_only,
   }
 }
-function formToQuery(form) {
+function formToQuery(form, filmId) {
   const f = formToFilter(form)
   return {
-    where: f.where,
-    film: f.film || undefined,
-    source: f.source || undefined,
-    minConfidence: f.min_confidence,
-    confirmedOnly: f.confirmed_only,
+    where: f.where, film: f.film || filmId || undefined, source: f.source || undefined,
+    minConfidence: f.min_confidence, confirmedOnly: f.confirmed_only,
   }
 }
 
-// -- Presets ----------------------------------------------------------------
+// -- icons ------------------------------------------------------------------
+const I = {
+  scissors: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="20" y2="16"/><line x1="8.5" y1="16.5" x2="20" y2="8"/></svg>,
+  scan: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 20h10"/><path d="M8 9l3 2.5L8 14"/><line x1="13" y1="14" x2="16" y2="14"/></svg>,
+  data: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg>,
+  reel: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.4"/><circle cx="12" cy="6" r="1.4"/><circle cx="12" cy="18" r="1.4"/><circle cx="6" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></svg>,
+  film: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/></svg>,
+  pad: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="7" width="20" height="10" rx="5"/><line x1="7" y1="12" x2="9" y2="12"/><line x1="8" y1="11" x2="8" y2="13"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/></svg>,
+  play: <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>,
+  check: <svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10" fill="none" stroke="currentColor" strokeWidth="2.4"/></svg>,
+  up: <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10m0 0l-3.5-3.5M12 13l3.5-3.5M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg>,
+}
 
-function PresetBar({ presets, onLoad, onSave, onDelete, onExport, onImport }) {
-  const [name, setName] = useState('')
-  const [sel, setSel] = useState('')
-  const fileRef = useRef(null)
+// ==========================================================================
+export default function App() {
+  const [films, setFilms] = useState([])
+  const [filmId, setFilmId] = useState('')            // active film context ('' = all)
+  const [view, setView] = useState('home')
+  const [tagKeys, setTagKeys] = useState([])
+  const [sizes, setSizes] = useState([])
+  const [presets, setPresets] = useState([])
+  const [error, setError] = useState('')
+  const [toast, setToast] = useState('')
 
-  const pickFile = () => fileRef.current && fileRef.current.click()
-  const onFile = async (e) => {
-    const file = e.target.files[0]
-    e.target.value = ''            // allow re-importing the same file
-    if (!file) return
-    try {
-      onImport(JSON.parse(await file.text()))
-    } catch (err) { onImport(null, 'Could not read that file: ' + err.message) }
+  const flash = (m) => { setToast(m); window.clearTimeout(flash._t); flash._t = window.setTimeout(() => setToast(''), 3500) }
+  const refreshFilms = () => getFilms().then(setFilms).catch((e) => setError(e.message))
+  const refreshPresets = () => getPresets().then(setPresets).catch(() => {})
+
+  useEffect(() => {
+    refreshFilms(); refreshPresets()
+    getTagKeys().then(setTagKeys).catch(() => {})
+    getExportSizes().then(setSizes).catch(() => {})
+  }, [])
+
+  const onDataChanged = async () => {
+    await refreshFilms()
+    getTagKeys().then(setTagKeys).catch(() => {})
   }
 
+  const totalPlays = films.reduce((n, f) => n + (f.plays || 0), 0)
+  const activeFilm = films.find((f) => String(f.id) === String(filmId))
+
+  const nav = (v) => { setError(''); setView(v) }
+
   return (
-    <div className="panel presets">
-      <h2>Presets</h2>
-      <div className="row">
-        <select value={sel} onChange={(e) => { setSel(e.target.value); if (e.target.value) onLoad(e.target.value) }}>
-          <option value="">load preset…</option>
-          {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
-        </select>
-        <button className="x" disabled={!sel} onClick={() => { onDelete(sel); setSel('') }}>delete</button>
+    <div className="app">
+      <header className="topbar">
+        <button className="home-btn" onClick={() => nav('home')} title="Home">
+          <img src="/logo.png" alt="" /><b>Pigskin Cutter</b>
+        </button>
+        {view !== 'home' && <span className="crumb">/ <b>{titleFor(view)}</b></span>}
+        <span className="spacer" />
+        {view !== 'home' && (
+          <select className="film-sel" value={filmId} onChange={(e) => setFilmId(e.target.value)}>
+            <option value="">All films</option>
+            {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+          </select>
+        )}
+        <span className="stat">{films.length} film{films.length !== 1 ? 's' : ''} · {totalPlays} plays</span>
+      </header>
+
+      {error && <div className="err-banner">{error}</div>}
+
+      <div className="body">
+        {view === 'home' && <Home nav={nav} />}
+        {view === 'plays' && (
+          <PlaysScreen films={films} filmId={filmId} tagKeys={tagKeys} presets={presets} sizes={sizes}
+            refreshPresets={refreshPresets} setError={setError} flash={flash} nav={nav} />
+        )}
+        {view === 'data' && <DataGrab films={films} filmId={filmId} onChanged={onDataChanged} flash={flash} nav={nav} />}
+        {view === 'detect' && <AutoDetect films={films} filmId={filmId} onChanged={onDataChanged} flash={flash} nav={nav} />}
+        {view === 'library' && <FilmLibrary films={films} onChanged={onDataChanged} flash={flash} nav={nav} />}
+        {view === 'tag' && <div className="screen wide"><TagPass films={films} onTagged={onDataChanged} /></div>}
+        {view === 'help' && <Help />}
       </div>
-      <div className="row">
-        <input placeholder="save current filter as…" value={name} onChange={(e) => setName(e.target.value)} />
-        <button disabled={!name.trim()} onClick={() => { onSave(name.trim()); setName('') }}>Save</button>
+
+      {toast && <div className="toast good">{toast}</div>}
+    </div>
+  )
+}
+function titleFor(v) {
+  return { plays: 'Clip Cutter', data: 'Data Grab', detect: 'Auto Detect',
+    library: 'Film Library', tag: 'Tag Pass', help: 'Coach\u2019s Guide' }[v] || ''
+}
+
+// -- HOME -------------------------------------------------------------------
+function Home({ nav }) {
+  const cards = [
+    ['plays', 'MANUAL', I.scissors, 'Clip Cutter', 'Find the plays you want, watch and trim them, and export clean clips — in any social size.'],
+    ['detect', 'AUTO-DETECT', I.scan, 'Auto Detect', 'Find every play automatically — from the broadcast game clock or scene cuts on All-22 film.'],
+    ['data', 'DATA', I.data, 'Data Grab', 'Pull official NFL & college play-by-play and line it up with your film.'],
+    ['plays', 'REEL', I.reel, 'Build Reel', 'Stitch chosen plays into one highlight reel with labels — vertical for Reels/TikTok.'],
+    ['library', 'LIBRARY', I.film, 'Film Library', 'Add a game — browse or drag & drop — and manage your film.'],
+  ]
+  return (
+    <div className="home">
+      <div className="brand">
+        <img src="/logo.png" alt="Pigskin Cutter" />
+        <div className="tag">Choose your workflow</div>
+        <div className="sub">Everything runs on your computer. No accounts, no upload, no waiting.</div>
       </div>
-      <div className="row">
-        <button onClick={pickFile}>Import…</button>
-        <button disabled={!presets.length} onClick={onExport}>Export</button>
-        <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFile} />
+      <div className="cards">
+        {cards.map(([v, lbl, ic, h, p], i) => (
+          <button className="card" key={i} onClick={() => nav(v)}>
+            <span className="lbl">{lbl}</span>
+            <span className="ic">{ic}</span>
+            <h3>{h}</h3><p>{p}</p>
+          </button>
+        ))}
+      </div>
+      <div className="home-foot">
+        <a onClick={() => nav('tag')}>Tag a game by hand</a>
+        <a href="https://youtube.com/playlist?list=PLI8T919f3wbOZMaz66tV3GMfzSofeHYqZ" target="_blank" rel="noreferrer">Tutorial videos</a>
+        <a onClick={() => nav('help')}>Coach&rsquo;s guide</a>
       </div>
     </div>
   )
 }
 
-// -- Filter builder (controlled by App-owned form state) --------------------
+// -- PLAYS (Clip Cutter + grid + presets + export + reel) -------------------
+function PlaysScreen({ films, filmId, tagKeys, presets, sizes, refreshPresets, setError, flash, nav }) {
+  const [form, setForm] = useState(emptyForm)
+  const [plays, setPlays] = useState([])
+  const [active, setActive] = useState(null)          // play open in preview
+  const [selected, setSelected] = useState(() => new Set())
+  const [activePreset, setActivePreset] = useState('')
+  const [showFilter, setShowFilter] = useState(false)
+  const [counts, setCounts] = useState({})            // preset name -> count
+  const [reelOpen, setReelOpen] = useState(false)
 
-function FilterBuilder({ form, setForm, tagKeys, films, onApply }) {
-  const [valueOptions, setValueOptions] = useState({})
-  const preds = form.preds
+  const load = async (q) => {
+    try { const res = await getPlays(q); setPlays(res.plays); setActive(null); setSelected(new Set()) }
+    catch (e) { setError(e.message) }
+  }
+  useEffect(() => { load(formToQuery(form, filmId)) }, [filmId])
 
-  const addPred = () =>
-    setForm((f) => ({ ...f, preds: [...f.preds, { key: tagKeys[0] || '', op: '=', value: '' }] }))
-  const update = (i, patch) =>
-    setForm((f) => ({ ...f, preds: f.preds.map((x, j) => (j === i ? { ...x, ...patch } : x)) }))
-  const remove = (i) =>
-    setForm((f) => ({ ...f, preds: f.preds.filter((_, j) => j !== i) }))
+  // preview counts for each preset (cheap enough for a coach's library)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const c = {}
+      for (const p of presets) {
+        try { const r = await getPlays({ ...queryFromPreset(p), film: filmId || undefined }); c[p.name] = r.count } catch { /* ignore */ }
+      }
+      if (alive) setCounts(c)
+    })()
+    return () => { alive = false }
+  }, [presets, filmId])
 
-  const loadValues = async (key) => {
-    if (!key || valueOptions[key]) return
-    try {
-      const vals = await getTagValues(key)
-      setValueOptions((v) => ({ ...v, [key]: vals }))
-    } catch { /* ignore */ }
+  const applyPreset = (p) => {
+    setActivePreset(p ? p.name : '')
+    const f = p ? filterToForm(p.filter) : emptyForm
+    setForm(f); load(formToQuery(f, filmId))
+  }
+  const applyForm = () => { setActivePreset(''); load(formToQuery(form, filmId)) }
+
+  const toggleSel = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const clearSel = () => setSelected(new Set())
+  const selectAll = () => setSelected(new Set(plays.map((p) => p.id)))
+
+  const onPlayChange = (u) => {
+    setPlays((ps) => ps.map((p) => (p.id === u.id ? { ...p, ...u } : p)))
+    setActive((a) => (a && a.id === u.id ? { ...a, ...u } : a))
+  }
+  const savePresetNow = async () => {
+    const name = window.prompt('Save this filter as a preset named:')
+    if (!name) return
+    try { await savePreset({ name: name.trim(), filter: formToFilter(form) }); await refreshPresets(); flash('Preset saved') }
+    catch (e) { setError(e.message) }
   }
 
+  const filterQuery = formToQuery(form, filmId)
   return (
-    <div className="panel filter">
-      <h2>Filter</h2>
-      {preds.map((p, i) => (
+    <div className="screen wide">
+      <div className="scr-bar">
+        <span className="back" onClick={() => nav('home')}>‹ Home</span>
+        <h2>Clip Cutter <span className="count">· {plays.length} play{plays.length !== 1 ? 's' : ''}</span></h2>
+        <div className="right">
+          <button className="btn ghost sm" onClick={() => setShowFilter((v) => !v)}>{showFilter ? 'Hide filter' : 'Advanced filter'}</button>
+        </div>
+      </div>
+
+      <div className="presets">
+        <span className="plabel">Suggested cuts</span>
+        <span className={'chip' + (activePreset === '' ? ' on' : '')} onClick={() => applyPreset(null)}>All plays</span>
+        {presets.map((p) => (
+          <span key={p.name} className={'chip' + (activePreset === p.name ? ' on' : '')} onClick={() => applyPreset(p)}>
+            {p.name}{counts[p.name] != null && <span className="n">{counts[p.name]}</span>}
+          </span>
+        ))}
+      </div>
+
+      <div className="plays-layout">
+        <div>
+          {showFilter && (
+            <div className="side-panel">
+              <h3>Filter</h3>
+              <FilterBuilder form={form} setForm={setForm} tagKeys={tagKeys} films={films} onApply={applyForm} />
+              <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={savePresetNow}>Save as preset</button>
+            </div>
+          )}
+          <div className="side-panel">
+            <h3>Export clips</h3>
+            <ExportPanel filter={filterQuery} count={plays.length} sizes={sizes} flash={flash} setError={setError} />
+          </div>
+        </div>
+
+        <div>
+          <div className="sheet">
+            {plays.length === 0 && <div className="sheet-empty">No plays match. Try “All plays” or a different film.</div>}
+            {plays.map((p) => (
+              <PlayCard key={p.id} p={p} selected={selected.has(p.id)} active={active?.id === p.id}
+                onOpen={() => setActive(p)} onToggle={() => toggleSel(p.id)} />
+            ))}
+          </div>
+          {selected.size > 0 && (
+            <div className="selbar">
+              <span className="s"><b>{selected.size}</b> selected</span>
+              <div className="right">
+                <button className="btn ghost sm" onClick={selectAll}>Select all</button>
+                <button className="btn ghost sm" onClick={clearSel}>Clear</button>
+                <button className="btn primary" onClick={() => setReelOpen(true)}>Build reel from selection</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="preview-col">
+          <div className="side-panel">
+            <Preview play={active} onChange={onPlayChange} />
+          </div>
+        </div>
+      </div>
+
+      {reelOpen && (
+        <ReelModal sizes={sizes} playIds={[...selected]} onClose={() => setReelOpen(false)} flash={flash} setError={setError} />
+      )}
+    </div>
+  )
+}
+
+function PlayCard({ p, selected, active, onOpen, onToggle }) {
+  const [imgOk, setImgOk] = useState(true)
+  const timed = p.t_start != null && p.t_end != null
+  const badge = p.source === 'pbp' || p.source === 'ocr' || p.source === 'detected'
+    ? (p.confidence < 0.8 ? ['low', 'CHECK'] : ['mach', p.source === 'ocr' ? 'OCR' : 'AUTO'])
+    : ['good', 'MATCHED']
+  const dur = timed ? (p.t_end - p.t_start).toFixed(1) + 's' : null
+  return (
+    <div className={'play' + (selected ? ' sel' : '') + (active ? ' active' : '')} onClick={onOpen}>
+      <div className="thumb">
+        {timed && imgOk
+          ? <img src={thumbUrl(p.id)} alt="" loading="lazy" onError={() => setImgOk(false)} />
+          : <span className="ph">{I.play}</span>}
+        {dur && <span className="dur">{dur}</span>}
+      </div>
+      <div className="check" onClick={(e) => { e.stopPropagation(); onToggle() }}>{I.check}</div>
+      <div className="meta" onClick={(e) => { e.stopPropagation(); onToggle() }}>
+        <span className="no">#{p.play_no ?? '—'}</span>
+        <span className="dd">{ddText(p)}</span>
+        <span className={'badge ' + badge[0]}>{badge[1]}</span>
+      </div>
+    </div>
+  )
+}
+
+function FilterBuilder({ form, setForm, tagKeys, films, onApply }) {
+  const [vals, setVals] = useState({})
+  const add = () => setForm((f) => ({ ...f, preds: [...f.preds, { key: tagKeys[0] || '', op: '=', value: '' }] }))
+  const upd = (i, patch) => setForm((f) => ({ ...f, preds: f.preds.map((x, j) => (j === i ? { ...x, ...patch } : x)) }))
+  const rm = (i) => setForm((f) => ({ ...f, preds: f.preds.filter((_, j) => j !== i) }))
+  const loadVals = async (k) => { if (!k || vals[k]) return; try { const vv = await getTagValues(k); setVals((v) => ({ ...v, [k]: vv })) } catch { /* */ } }
+  return (
+    <>
+      {form.preds.map((p, i) => (
         <div className="pred" key={i}>
-          <select value={p.key} onChange={(e) => { update(i, { key: e.target.value }); loadValues(e.target.value) }}>
+          <select value={p.key} onChange={(e) => { upd(i, { key: e.target.value }); loadVals(e.target.value) }}>
             {!tagKeys.includes(p.key) && p.key ? <option value={p.key}>{p.key}</option> : null}
             {tagKeys.map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
-          <select value={p.op} onChange={(e) => update(i, { op: e.target.value })}>
+          <select value={p.op} onChange={(e) => upd(i, { op: e.target.value })} style={{ flex: '0 0 auto', width: '3.6rem' }}>
             {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
           {p.op !== 'exists' && (
-            <>
-              <input list={`vals-${i}`} value={p.value}
-                onChange={(e) => update(i, { value: e.target.value })}
-                onFocus={() => loadValues(p.key)} placeholder="value" />
-              <datalist id={`vals-${i}`}>
-                {(valueOptions[p.key] || []).map((v) => <option key={v} value={v} />)}
-              </datalist>
-            </>
+            <input list={`v${i}`} value={p.value} placeholder="value"
+              onFocus={() => loadVals(p.key)} onChange={(e) => upd(i, { value: e.target.value })} />
           )}
-          <button className="x" onClick={() => remove(i)}>×</button>
+          <datalist id={`v${i}`}>{(vals[p.key] || []).map((v) => <option key={v} value={v} />)}</datalist>
+          <button className="x" onClick={() => rm(i)}>×</button>
         </div>
       ))}
-      <button onClick={addPred}>+ condition</button>
-
-      <div className="meta">
-        <label>Film
-          <select value={form.film} onChange={(e) => setForm((f) => ({ ...f, film: e.target.value }))}>
-            <option value="">any</option>
-            {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
-          </select>
-        </label>
+      <button className="btn ghost sm" onClick={add}>+ condition</button>
+      <div className="meta-row">
         <label>Source
-          <select value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.target.value }))}>
-            <option value="">any</option>
-            {['hudl', 'tagged', 'detected', 'ocr'].map((s) => <option key={s} value={s}>{s}</option>)}
+          <select className="inp" value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.target.value }))}>
+            <option value="">any</option>{['hudl', 'tagged', 'detected', 'ocr', 'pbp'].map((s) => <option key={s}>{s}</option>)}
           </select>
         </label>
-        <label>Min conf
-          <input type="number" step="0.1" min="0" max="1" value={form.minConf}
-            onChange={(e) => setForm((f) => ({ ...f, minConf: e.target.value }))} style={{ width: '4em' }} />
+        <label>Min confidence
+          <input className="inp" type="number" step="0.1" min="0" max="1" style={{ width: '4.5rem' }}
+            value={form.minConf} onChange={(e) => setForm((f) => ({ ...f, minConf: e.target.value }))} />
         </label>
-        <label className="chk">
-          <input type="checkbox" checked={form.confirmedOnly}
-            onChange={(e) => setForm((f) => ({ ...f, confirmedOnly: e.target.checked }))} /> confirmed only
-        </label>
+        <label className="chk"><input type="checkbox" checked={form.confirmedOnly}
+          onChange={(e) => setForm((f) => ({ ...f, confirmedOnly: e.target.checked }))} /> confirmed only</label>
       </div>
-      <button className="primary" onClick={onApply}>Apply</button>
-    </div>
+      <button className="btn primary" style={{ width: '100%' }} onClick={onApply}>Apply filter</button>
+    </>
   )
 }
-
-// -- Play grid --------------------------------------------------------------
-
-function PlayGrid({ plays, selectedId, onSelect }) {
-  const keys = useMemo(() => {
-    const s = new Set()
-    plays.forEach((p) => Object.keys(p.tags).forEach((k) => s.add(k)))
-    return Array.from(s).sort()
-  }, [plays])
-
-  return (
-    <div className="grid-wrap">
-      <table className="grid">
-        <thead>
-          <tr>
-            <th>#</th><th>start</th><th>end</th><th>src</th><th>conf</th>
-            {keys.map((k) => <th key={k}>{k}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {plays.map((p) => (
-            <tr key={p.id} className={p.id === selectedId ? 'sel' : ''} onClick={() => onSelect(p)}>
-              <td>{p.play_no ?? '—'}</td>
-              <td>{fmt(p.t_start)}</td>
-              <td>{fmt(p.t_end)}</td>
-              <td>{p.source}</td>
-              <td className={p.confidence < 1 ? 'lowconf' : ''}>{p.confidence.toFixed(2)}</td>
-              {keys.map((k) => <td key={k}>{p.tags[k] ?? ''}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-// -- Preview + nudge --------------------------------------------------------
 
 function Preview({ play, onChange }) {
-  const videoRef = useRef(null)
-
+  const v = useRef(null)
   useEffect(() => {
-    const v = videoRef.current
-    if (v && play && play.t_start != null) {
-      const seek = () => { v.currentTime = play.t_start }
-      if (v.readyState >= 1) seek()
-      else v.addEventListener('loadedmetadata', seek, { once: true })
+    const el = v.current
+    if (el && play && play.t_start != null) {
+      const seek = () => { el.currentTime = play.t_start }
+      el.readyState >= 1 ? seek() : el.addEventListener('loadedmetadata', seek, { once: true })
     }
   }, [play?.id])
-
-  if (!play) return <div className="panel preview empty">Select a play to preview.</div>
-
-  const nudge = async (field, delta) => {
-    const next = (play[field] ?? 0) + delta
-    const updated = await patchPlay(play.id, { [field]: Math.max(0, next) })
-    onChange(updated)
-  }
-  const setToPlayhead = async (field) => {
-    const v = videoRef.current
-    if (!v) return
-    const updated = await patchPlay(play.id, { [field]: v.currentTime })
-    onChange(updated)
-  }
-
+  if (!play) return <div className="pv-empty">Click a play to watch and trim it.</div>
+  const nudge = async (field, d) => onChange(await patchPlay(play.id, { [field]: Math.max(0, (play[field] ?? 0) + d) }))
+  const toHead = async (field) => { if (v.current) onChange(await patchPlay(play.id, { [field]: v.current.currentTime })) }
   return (
-    <div className="panel preview">
-      <h2>Play {play.play_no ?? play.id}</h2>
-      <video ref={videoRef} src={streamUrl(play.film_id)} controls preload="metadata" />
-      <div className="nudge">
-        <div className="row">
-          <span>start {fmt(play.t_start)}</span>
-          <button onClick={() => nudge('t_start', -0.5)}>-0.5</button>
-          <button onClick={() => nudge('t_start', -0.1)}>-0.1</button>
-          <button onClick={() => nudge('t_start', 0.1)}>+0.1</button>
-          <button onClick={() => nudge('t_start', 0.5)}>+0.5</button>
-          <button onClick={() => setToPlayhead('t_start')}>= playhead</button>
+    <div className="preview">
+      <video ref={v} src={streamUrl(play.film_id)} controls preload="metadata" />
+      <div className="pv-body">
+        <h3>Play {play.play_no ?? play.id} · {ddText(play)}</h3>
+        <div className="nudge">
+          <div className="row"><span className="k">start {fmt(play.t_start)}</span>
+            {[-0.5, -0.1, 0.1, 0.5].map((d) => <button className="btn sm" key={d} onClick={() => nudge('t_start', d)}>{d > 0 ? '+' : ''}{d}</button>)}
+            <button className="btn sm" onClick={() => toHead('t_start')}>= here</button></div>
+          <div className="row"><span className="k">end {fmt(play.t_end)}</span>
+            {[-0.5, -0.1, 0.1, 0.5].map((d) => <button className="btn sm" key={d} onClick={() => nudge('t_end', d)}>{d > 0 ? '+' : ''}{d}</button>)}
+            <button className="btn sm" onClick={() => toHead('t_end')}>= here</button></div>
         </div>
-        <div className="row">
-          <span>end {fmt(play.t_end)}</span>
-          <button onClick={() => nudge('t_end', -0.5)}>-0.5</button>
-          <button onClick={() => nudge('t_end', -0.1)}>-0.1</button>
-          <button onClick={() => nudge('t_end', 0.1)}>+0.1</button>
-          <button onClick={() => nudge('t_end', 0.5)}>+0.5</button>
-          <button onClick={() => setToPlayhead('t_end')}>= playhead</button>
-        </div>
-      </div>
-      <div className="tags">
-        {Object.entries(play.tags).map(([k, v]) => (
-          <span className="tag" key={k}>{k}={v}</span>
-        ))}
+        <div className="tags">{Object.entries(play.tags).slice(0, 12).map(([k, val]) => <span className="tag" key={k}>{k} <b>{val}</b></span>)}</div>
       </div>
     </div>
   )
 }
 
-// -- Export -----------------------------------------------------------------
-
-function ExportPanel({ filter, count }) {
+function ExportPanel({ filter, count, sizes, flash, setError }) {
   const [out, setOut] = useState('')
+  const [size, setSize] = useState('source')
   const [logo, setLogo] = useState('')
   const [pos, setPos] = useState('bottom-right')
-  const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
+  const [result, setResult] = useState(null)
   const run = async (dry) => {
-    setError(''); setBusy(true); setResult(null)
-    const branding = logo ? { logo, logo_position: pos } : {}
+    setBusy(true); setResult(null); setError('')
     try {
-      setResult(await postExport({ ...filter, out, dry_run: dry, ...branding }))
+      const body = { ...filter, out, dry_run: dry, size: size === 'source' ? null : size }
+      if (logo) { body.logo = logo; body.logo_position = pos }
+      const r = await postExport(body); setResult(r)
+      if (!dry) flash(`Exported ${r.count} clip${r.count !== 1 ? 's' : ''}`)
     } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
-
   return (
-    <div className="panel export">
-      <h2>Export ({count} plays)</h2>
-      <input placeholder="output folder" value={out} onChange={(e) => setOut(e.target.value)} />
+    <div className="export">
+      <input className="inp full" placeholder="output folder (e.g. C:\cutups)" value={out} onChange={(e) => setOut(e.target.value)} />
+      <label className="fld">Size / platform</label>
+      <select className="inp full" value={size} onChange={(e) => setSize(e.target.value)}>
+        {sizes.map((s) => <option key={s.key} value={s.key}>{s.label} — {s.platform}</option>)}
+      </select>
+      <label className="fld">Logo / watermark (optional)</label>
       <div className="row">
-        <input placeholder="logo image (optional)" value={logo} onChange={(e) => setLogo(e.target.value)} style={{ flex: 2 }} />
-        <select value={pos} onChange={(e) => setPos(e.target.value)} disabled={!logo} style={{ flex: 1 }}>
-          <option value="bottom-right">BR</option>
-          <option value="bottom-left">BL</option>
-          <option value="top-right">TR</option>
-          <option value="top-left">TL</option>
-          <option value="center">center</option>
+        <input className="inp" style={{ flex: 2 }} placeholder="logo image path" value={logo} onChange={(e) => setLogo(e.target.value)} />
+        <select className="inp" style={{ flex: 1 }} value={pos} disabled={!logo} onChange={(e) => setPos(e.target.value)}>
+          <option value="bottom-right">BR</option><option value="bottom-left">BL</option>
+          <option value="top-right">TR</option><option value="top-left">TL</option><option value="center">center</option>
         </select>
       </div>
-      {logo && <div className="hint">Branding re-encodes clips (slower than a plain cut).</div>}
-      <div className="row">
-        <button onClick={() => run(true)} disabled={busy || !out}>Dry run</button>
-        <button className="primary" onClick={() => run(false)} disabled={busy || !out}>Cut clips</button>
+      {(logo || size !== 'source') && <div className="hint">Re-encodes each clip (slower than a plain cut).</div>}
+      <div className="row" style={{ marginTop: 10 }}>
+        <button className="btn" disabled={busy || !out} onClick={() => run(true)}>Dry run</button>
+        <button className="btn primary" disabled={busy || !out} onClick={() => run(false)}>Cut {count} clip{count !== 1 ? 's' : ''}</button>
       </div>
-      {error && <div className="error">{error}</div>}
       {result && (
-        <div className="result">
-          <div>{result.dry_run ? 'Dry run' : 'Done'}: {result.count} clip(s)
-            {result.skipped ? `, ${result.skipped} untimed skipped` : ''}
-            {result.failed ? `, ${result.failed} failed` : ''}</div>
-          <ul>
-            {result.clips.slice(0, 12).map((c, i) => (
-              <li key={i}>{c.output} &larr; {c.in}–{c.out} ({c.mode})</li>
-            ))}
-          </ul>
+        <div className="result">{result.dry_run ? 'Dry run' : 'Done'}: {result.count} clip(s)
+          {result.skipped ? `, ${result.skipped} untimed skipped` : ''}{result.failed ? `, ${result.failed} failed` : ''}
+          <ul>{result.clips.slice(0, 10).map((c, i) => <li key={i}>{c.output} ({c.mode})</li>)}</ul>
         </div>
       )}
     </div>
   )
 }
 
-// -- Film library / import --------------------------------------------------
+function ReelModal({ sizes, playIds, onClose, flash, setError }) {
+  const [title, setTitle] = useState('')
+  const [label, setLabel] = useState(true)
+  const [size, setSize] = useState('landscape_720')
+  const [job, setJob] = useState(null)
+  const poll = useRef(null)
+  useEffect(() => () => clearInterval(poll.current), [])
+  const start = async () => {
+    setError('')
+    try {
+      const j = await startReel({ play_ids: playIds, title: title || null, label, size })
+      setJob(j)
+      poll.current = setInterval(async () => {
+        try { const u = await getJob(j.id); setJob(u); if (u.status !== 'running') { clearInterval(poll.current); if (u.status === 'done') flash('Reel ready: ' + (u.output || '')) } }
+        catch { clearInterval(poll.current) }
+      }, 1500)
+    } catch (e) { setError(e.message) }
+  }
+  const running = job && job.status === 'running'
+  return (
+    <div className="toast" style={{ width: 'min(440px, 92vw)', bottom: 20 }} onClick={(e) => e.stopPropagation()}>
+      <b>Build reel · {playIds.length} plays</b>
+      <label className="fld">Title slate (optional)</label>
+      <input className="inp full" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. 3rd Down Stops" />
+      <label className="fld">Size</label>
+      <select className="inp full" value={size} onChange={(e) => setSize(e.target.value)}>
+        {sizes.filter((s) => s.key !== 'source').map((s) => <option key={s.key} value={s.key}>{s.label} — {s.platform}</option>)}
+      </select>
+      <label className="chk" style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0', fontSize: 13 }}>
+        <input type="checkbox" checked={label} onChange={(e) => setLabel(e.target.checked)} /> Burn play labels (down &amp; distance)
+      </label>
+      {job && <div className={'job' + (job.status === 'failed' ? ' bad' : '')}>
+        {job.message}
+        {running && job.total > 0 && <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.round(100 * job.done / job.total)}%` }} /></div>}
+      </div>}
+      <div className="row" style={{ marginTop: 10, gap: 8, display: 'flex' }}>
+        <button className="btn" onClick={onClose}>{job && job.status === 'done' ? 'Close' : 'Cancel'}</button>
+        <button className="btn primary" disabled={running} onClick={start}>{running ? 'Building…' : 'Build reel'}</button>
+      </div>
+    </div>
+  )
+}
 
-function PbpImport({ films, onChanged }) {
-  const [filmId, setFilmId] = useState('')
+// -- DATA GRAB (PBP) --------------------------------------------------------
+function DataGrab({ films, filmId, onChanged, flash, nav }) {
+  const [film, setFilm] = useState(filmId || '')
   const [source, setSource] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
-
   const run = async (dry) => {
-    setError(''); setBusy(true); setResult(null)
+    setBusy(true); setResult(null); setError('')
     try {
-      const r = await importPbp({ film_id: Number(filmId), source, dry_run: dry })
-      setResult(r)
-      if (!dry) onChanged()
+      const r = await importPbp({ film_id: Number(film), source, dry_run: dry })
+      setResult(r); if (!dry) { onChanged(); flash(`Imported ${r.imported} plays`) }
     } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
-
   return (
-    <div className="film-add">
-      <h2>Import play-by-play</h2>
-      <label>Attach to film</label>
-      <select value={filmId} onChange={(e) => setFilmId(e.target.value)} style={{ width: '100%', marginBottom: '0.4rem' }}>
-        <option value="">select film…</option>
-        {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
-      </select>
-      <label>Box-score URL or saved .html path</label>
-      <input value={source} onChange={(e) => setSource(e.target.value)}
-        placeholder="https://…/boxscore/25444" style={{ width: '100%' }} />
-      <div className="row" style={{ marginTop: '0.6rem' }}>
-        <button onClick={() => run(true)} disabled={busy || !filmId || !source}>Preview</button>
-        <button className="primary" onClick={() => run(false)} disabled={busy || !filmId || !source}>Import</button>
+    <div className="screen">
+      <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span>
+        <h2>Data Grab <span className="count">· NFL &amp; college play-by-play</span></h2></div>
+      <div className="steps">
+        <Step n="1" h="Pick the game" hint="Paste the box-score link from the athletics site (fetched once, then saved).">
+          <input className="inp" style={{ width: '100%' }} value={source} onChange={(e) => setSource(e.target.value)}
+            placeholder="https://…athletics.com/…/boxscore/25444" />
+        </Step>
+        <Step n="2" h="Attach it to a film" hint="The plays line up on this film's timeline once imported.">
+          <select className="inp" value={film} onChange={(e) => setFilm(e.target.value)}>
+            <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+          </select>
+        </Step>
+        <Step n="3" h="Preview, then import" hint="Preview shows the counts without changing anything.">
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn" disabled={busy || !film || !source} onClick={() => run(true)}>Preview</button>
+            <button className="btn primary" disabled={busy || !film || !source} onClick={() => run(false)}>Import play-by-play</button>
+          </div>
+        </Step>
       </div>
-      <span className="hint2">Fetched once and cached. Plays land with no cut times (aligned later).</span>
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" style={{ maxWidth: 720 }}>{error}</div>}
       {result && (
-        <div className="result" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
-          {result.dry_run ? 'Preview' : 'Imported'}: {result.count ?? result.imported} plays
-          {' — '}{Object.entries(result.possession || {}).map(([t, n]) => `${t}: ${n}`).join(', ')}
-          {(result.warnings || []).map((w, i) => <div key={i} className="hint">{w}</div>)}
+        <div className="result" style={{ maxWidth: 720 }}>
+          {result.dry_run ? 'Preview' : 'Imported'}: {result.count ?? result.imported} plays — {Object.entries(result.possession || {}).map(([t, n]) => `${t}: ${n}`).join(', ')}
+          {(result.warnings || []).map((w, i) => <div className="hint" key={i}>{w}</div>)}
+          <div className="hint2">Plays land with no cut times yet — use <b>Auto Detect</b> to line them up on the video.</div>
         </div>
       )}
     </div>
   )
 }
 
-function AlignPanel({ films, onChanged }) {
-  const [filmId, setFilmId] = useState('')
+// -- AUTO DETECT (align; scene-detect coming) -------------------------------
+function AutoDetect({ films, filmId, onChanged, flash, nav }) {
+  const [film, setFilm] = useState(filmId || '')
   const [job, setJob] = useState(null)
   const [error, setError] = useState('')
-  const pollRef = useRef(null)
-
-  useEffect(() => () => clearInterval(pollRef.current), [])
-
-  const poll = (id) => {
-    pollRef.current = setInterval(async () => {
-      try {
-        const j = await getJob(id)
-        setJob(j)
-        if (j.status !== 'running') {
-          clearInterval(pollRef.current)
-          if (j.status === 'done') onChanged()
-        }
-      } catch { clearInterval(pollRef.current) }
-    }, 2000)
-  }
-
+  const poll = useRef(null)
+  useEffect(() => () => clearInterval(poll.current), [])
   const start = async () => {
     setError(''); setJob(null)
     try {
-      const j = await startAlign({ film_id: Number(filmId) })
-      setJob(j); poll(j.id)
+      const j = await startAlign({ film_id: Number(film) }); setJob(j)
+      poll.current = setInterval(async () => {
+        try { const u = await getJob(j.id); setJob(u); if (u.status !== 'running') { clearInterval(poll.current); if (u.status === 'done') { onChanged(); flash(u.message) } } }
+        catch { clearInterval(poll.current) }
+      }, 2000)
     } catch (e) { setError(e.message) }
   }
-
   const running = job && job.status === 'running'
   return (
-    <div className="film-add">
-      <h2>Auto-align a broadcast game</h2>
-      <p className="hint2" style={{ margin: '0 0 0.5rem' }}>
-        Reads the on-screen game clock and lines the play-by-play up with the video — no tagging.
-        Needs the play-by-play imported first, and a visible clock in the picture. Takes several minutes.
-      </p>
-      <div className="row">
-        <select value={filmId} onChange={(e) => setFilmId(e.target.value)} style={{ flex: 1 }} disabled={running}>
-          <option value="">select film…</option>
-          {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
-        </select>
-        <button className="primary" onClick={start} disabled={!filmId || running}>
-          {running ? 'Running…' : 'Auto-align'}
-        </button>
-      </div>
-      {job && (
-        <div className={'result ' + (job.status === 'failed' ? 'error' : '')} style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-          <div><b>{job.phase}</b> — {job.message}</div>
-          {job.status === 'running' && <div>{job.frames} frames read, {job.samples} clock reads</div>}
-          {job.status === 'done' && <div>Placed {job.placed} plays. They're timed now — filter and export them on the Plays tab.</div>}
+    <div className="screen">
+      <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span><h2>Auto Detect <span className="count">· find plays automatically</span></h2></div>
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 6px' }}>Broadcast — read the game clock</h4>
+        <p className="hint3">Reads the on-screen game clock and lines your imported play-by-play up with the video. Needs the play-by-play imported first and a visible clock. Takes several minutes.</p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <select className="inp" style={{ flex: 1 }} value={film} disabled={running} onChange={(e) => setFilm(e.target.value)}>
+            <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+          </select>
+          <button className="btn primary" disabled={!film || running} onClick={start}>{running ? 'Scanning…' : 'Auto-align'}</button>
         </div>
-      )}
-      {error && <div className="error">{error}</div>}
+        {job && <div className={'job' + (job.status === 'failed' ? ' bad' : '')}>
+          <b>{job.phase}</b> — {job.message}
+          {running && <div>{job.frames} frames read · {job.samples} clock reads</div>}
+        </div>}
+        {error && <div className="error">{error}</div>}
+      </div>
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 6px' }}>All-22 &amp; coaches film — detect scene cuts <span className="badge low" style={{ marginLeft: 8 }}>COMING</span></h4>
+        <p className="hint3">On All-22 and end-zone film, each play is its own camera cut. This mode will split the film at those cuts — no game clock required. In progress.</p>
+      </div>
     </div>
   )
 }
 
-function FilmLibrary({ films, onChanged }) {
+// -- FILM LIBRARY -----------------------------------------------------------
+function FilmLibrary({ films, onChanged, flash, nav }) {
   const [available, setAvailable] = useState([])
   const [sourceTypes, setSourceTypes] = useState(Object.keys(SOURCE_LABELS))
   const [path, setPath] = useState('')
@@ -447,74 +593,75 @@ function FilmLibrary({ films, onChanged }) {
   const [stype, setStype] = useState('broadcast')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [hot, setHot] = useState(false)
+  const hasNative = typeof window !== 'undefined' && window.pywebview && window.pywebview.api && window.pywebview.api.pick_film
 
-  const refreshAvailable = () => getLibraryFilms().then(setAvailable).catch(() => {})
-  useEffect(() => {
-    refreshAvailable()
-    getSourceTypes().then(setSourceTypes).catch(() => {})
-  }, [films])
+  const refresh = () => getLibraryFilms().then(setAvailable).catch(() => {})
+  useEffect(() => { refresh(); getSourceTypes().then(setSourceTypes).catch(() => {}) }, [films])
 
   const add = async () => {
-    setError(''); setBusy(true)
-    try {
-      await registerFilm({ path, label: label || null, source_type: stype })
-      setPath(''); setLabel('')
-      onChanged()
-    } catch (e) { setError(e.message) } finally { setBusy(false) }
+    setBusy(true); setError('')
+    try { await registerFilm({ path, label: label || null, source_type: stype }); setPath(''); setLabel(''); onChanged(); flash('Film added') }
+    catch (e) { setError(e.message) } finally { setBusy(false) }
   }
   const remove = async (id) => {
     if (!window.confirm('Remove this film and its plays from the index? (The file stays on disk.)')) return
     try { await deleteFilm(id); onChanged() } catch (e) { setError(e.message) }
   }
+  const browse = async () => {
+    if (!hasNative) return
+    try { const picked = await window.pywebview.api.pick_film(); if (picked) setPath(picked) } catch (e) { setError(String(e)) }
+  }
+  const onDrop = (e) => {
+    e.preventDefault(); setHot(false)
+    const f = e.dataTransfer.files && e.dataTransfer.files[0]
+    // pywebview exposes the real filesystem path; browsers do not.
+    const p = f && (f.path || f.name)
+    if (p) setPath(p)
+  }
 
   return (
-    <div className="films-view">
-      <div className="film-add">
-        <h2>Add film</h2>
-        <label>File in library folder</label>
-        <div className="row">
-          <input value={path} onChange={(e) => setPath(e.target.value)}
-            placeholder="e.g. 2026/mines-vs-csc.mp4" style={{ flex: 1 }} />
-          <select value="" onChange={(e) => e.target.value && setPath(e.target.value)} style={{ width: '9rem' }}>
-            <option value="">browse…</option>
-            {available.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
+    <div className="screen">
+      <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span><h2>Film Library <span className="count">· {films.length} film{films.length !== 1 ? 's' : ''}</span></h2></div>
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 10px' }}>Add a film</h4>
+        <div className={'dropzone' + (hot ? ' hot' : '')} onDragOver={(e) => { e.preventDefault(); setHot(true) }}
+          onDragLeave={() => setHot(false)} onDrop={onDrop} onClick={hasNative ? browse : undefined}>
+          {I.up}
+          <div>{hasNative ? 'Click to browse, or drag a film here' : 'Drag a film file here'}</div>
+          <div className="hint2">The film needs to live inside your library folder.</div>
         </div>
-        <div className="row">
-          <div style={{ flex: 1 }}>
-            <label>Label</label>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="CSC @ Mines" style={{ width: '100%' }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label>Source type</label>
-            <select value={stype} onChange={(e) => setStype(e.target.value)} style={{ width: '100%' }}>
+        <label className="fld">File (in library folder)</label>
+        <div className="row" style={{ gap: 8 }}>
+          <input className="inp" style={{ flex: 1 }} value={path} onChange={(e) => setPath(e.target.value)} placeholder="e.g. 2026/mines-vs-csc.mp4" />
+          {hasNative
+            ? <button className="btn" onClick={browse}>Browse…</button>
+            : <select className="inp" value="" onChange={(e) => e.target.value && setPath(e.target.value)}>
+                <option value="">choose…</option>{available.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>}
+        </div>
+        <div className="grid2" style={{ marginTop: 10 }}>
+          <div><label className="fld">Label</label><input className="inp full" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="CSC @ Mines" /></div>
+          <div><label className="fld">Type</label>
+            <select className="inp full" value={stype} onChange={(e) => setStype(e.target.value)}>
               {sourceTypes.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
-            </select>
-          </div>
+            </select></div>
         </div>
-        <button className="primary" onClick={add} disabled={busy || !path}>Register film</button>
-        <span className="hint2">Probes fps · codec · interlace · duration. The file must be inside the library folder.</span>
+        <button className="btn primary" style={{ marginTop: 12 }} disabled={busy || !path} onClick={add}>Add film</button>
+        <span className="hint2">Probes fps · codec · interlace · duration.</span>
         {error && <div className="error">{error}</div>}
       </div>
 
-      <PbpImport films={films} onChanged={onChanged} />
-      <AlignPanel films={films} onChanged={onChanged} />
-
-      <div className="film-list">
-        <h2>Films in library ({films.length})</h2>
-        {films.length === 0 && <div className="empty">No films yet. Add one above.</div>}
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 6px' }}>Your film</h4>
+        {films.length === 0 && <div className="hint2">No films yet — add one above.</div>}
         {films.map((f) => (
           <div className="film-row" key={f.id}>
-            <div>
+            <div style={{ flex: 1 }}>
               <div className="fname">{f.label || f.path}</div>
-              <div className="fmeta">
-                {sourceLabel(f.source_type)} · {f.plays} plays
-                {f.fps ? ` · ${Math.round(f.fps)}fps` : ''}
-                {f.interlaced === 1 ? ' · interlaced' : ''}
-                <span className="fpath"> · {f.path}</span>
-              </div>
+              <div className="fmeta">{sourceLabel(f.source_type)} · {f.plays} plays{f.fps ? ` · ${Math.round(f.fps)}fps` : ''}{f.interlaced === 1 ? ' · interlaced' : ''}<span className="fpath"> · {f.path}</span></div>
             </div>
-            <button className="x" onClick={() => remove(f.id)}>remove</button>
+            <button className="btn ghost sm" onClick={() => remove(f.id)}>Remove</button>
           </div>
         ))}
       </div>
@@ -522,118 +669,11 @@ function FilmLibrary({ films, onChanged }) {
   )
 }
 
-// -- App --------------------------------------------------------------------
-
-export default function App() {
-  const [films, setFilms] = useState([])
-  const [tagKeys, setTagKeys] = useState([])
-  const [form, setForm] = useState(emptyForm)
-  const [filter, setFilter] = useState({ where: [] })
-  const [plays, setPlays] = useState([])
-  const [selected, setSelected] = useState(null)
-  const [presets, setPresets] = useState([])
-  const [view, setView] = useState('plays')
-  const [error, setError] = useState('')
-
-  const refreshPresets = () => getPresets().then(setPresets).catch(() => {})
-  const refreshFilms = () => getFilms().then(setFilms).catch((e) => setError(e.message))
-
-  useEffect(() => {
-    refreshFilms()
-    getTagKeys().then(setTagKeys).catch(() => {})
-    getPlays({ where: [] }).then((res) => setPlays(res.plays)).catch(() => {})
-    refreshPresets()
-  }, [])
-
-  // After a film is added/removed, refresh films + tag keys + the play grid.
-  const onFilmsChanged = async () => {
-    await refreshFilms()
-    getTagKeys().then(setTagKeys).catch(() => {})
-    try { setPlays((await getPlays(filter)).plays) } catch { /* ignore */ }
-  }
-
-  const applyForm = async (f) => {
-    const q = formToQuery(f); setFilter(q); setError('')
-    try {
-      const res = await getPlays(q)
-      setPlays(res.plays)
-      setSelected(null)
-    } catch (e) { setError(e.message) }
-  }
-
-  const loadPreset = async (name) => {
-    const p = presets.find((x) => x.name === name)
-    if (!p) return
-    const nf = filterToForm(p.filter)
-    setForm(nf)
-    await applyForm(nf)
-  }
-  const savePresetNow = async (name) => {
-    try { await savePreset({ name, filter: formToFilter(form) }); await refreshPresets() }
-    catch (e) { setError(e.message) }
-  }
-  const deletePresetNow = async (name) => {
-    try { await deletePreset(name); await refreshPresets() }
-    catch (e) { setError(e.message) }
-  }
-  const exportPresetsNow = async () => {
-    try {
-      const pack = await exportPresets()
-      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = 'cutup-presets.json'; a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) { setError(e.message) }
-  }
-  const importPresetsNow = async (data, errMsg) => {
-    if (errMsg) { setError(errMsg); return }
-    const list = Array.isArray(data) ? data : (data && data.presets) || []
-    try { await importPresets(list); await refreshPresets() }
-    catch (e) { setError(e.message) }
-  }
-
-  const onPlayChange = (updated) => {
-    setPlays((ps) => ps.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
-    setSelected((s) => (s && s.id === updated.id ? { ...s, ...updated } : s))
-  }
-
-  return (
-    <div className="app">
-      <header>
-        <h1>Pigskin Cutter</h1>
-        <nav>
-          <button className={view === 'plays' ? 'active' : ''} onClick={() => setView('plays')}>Plays</button>
-          <button className={view === 'films' ? 'active' : ''} onClick={() => setView('films')}>Films</button>
-          <button className={view === 'tag' ? 'active' : ''} onClick={() => setView('tag')}>Tag pass</button>
-          <button className={view === 'help' ? 'active' : ''} onClick={() => setView('help')}>Help</button>
-        </nav>
-        <span className="films">{films.length} film(s), {films.reduce((n, f) => n + (f.plays || 0), 0)} plays</span>
-      </header>
-      {error && <div className="error banner">{error}</div>}
-      {view === 'films' ? (
-        <FilmLibrary films={films} onChanged={onFilmsChanged} />
-      ) : view === 'tag' ? (
-        <TagPass films={films} onTagged={onFilmsChanged} />
-      ) : view === 'help' ? (
-        <Help />
-      ) : (
-      <div className="cols">
-        <aside>
-          <PresetBar presets={presets} onLoad={loadPreset} onSave={savePresetNow} onDelete={deletePresetNow}
-            onExport={exportPresetsNow} onImport={importPresetsNow} />
-          <FilterBuilder form={form} setForm={setForm} tagKeys={tagKeys} films={films}
-            onApply={() => applyForm(form)} />
-          <ExportPanel filter={filter} count={plays.length} />
-        </aside>
-        <main>
-          <PlayGrid plays={plays} selectedId={selected?.id} onSelect={setSelected} />
-        </main>
-        <section className="right">
-          <Preview play={selected} onChange={onPlayChange} />
-        </section>
-      </div>
-      )}
-    </div>
-  )
+// -- small shared bits ------------------------------------------------------
+function Step({ n, h, hint, children }) {
+  return <div className="step"><div className="num">{n}</div><div><h4>{h}</h4><p className="hint3">{hint}</p>{children}</div></div>
+}
+function queryFromPreset(p) {
+  const f = p.filter || {}
+  return { where: f.where || [], source: f.source || undefined, minConfidence: f.min_confidence, confirmedOnly: f.confirmed_only }
 }
