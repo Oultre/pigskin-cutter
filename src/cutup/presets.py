@@ -109,6 +109,43 @@ def import_presets(conn, items, *, overwrite: bool = True) -> tuple[int, int]:
     return imported, skipped
 
 
+# -- starter presets (seeded into a new library) ----------------------------
+
+# Coach-recognizable cut-ups built from tag keys/values the importers actually
+# produce (down, distance, gain, result, play_type). Predicate values are the
+# lowercase forms the PBP/Hudl importers emit. Deliberately no Red-Zone/Two-Minute
+# preset: yard_side holds a team abbreviation (not own/opponent) and there is no
+# game-clock tag, so those can't be expressed as a simple filter yet.
+STARTER_PRESETS: list[tuple[str, list[str]]] = [
+    ("1st Down", ["down=1"]),
+    ("2nd & Long", ["down=2", "distance>=7"]),
+    ("3rd & Long", ["down=3", "distance>=7"]),
+    ("3rd & Short", ["down=3", "distance<=3"]),
+    ("4th Down", ["down=4"]),
+    ("Explosive (15+ yds)", ["gain>=15"]),
+    ("Touchdowns", ["result=touchdown"]),
+    ("Turnovers", ["result in (interception, fumble)"]),
+    ("Pass Plays", ["play_type=pass"]),
+    ("Run Plays", ["play_type=run"]),
+]
+
+
+def seed_starter_presets(conn, *, overwrite: bool = False) -> int:
+    """Add the built-in starter presets. Returns how many were created.
+
+    ``overwrite=False`` (the default) never touches a preset the coach already
+    has by that name, so re-seeding an existing library is safe.
+    """
+    created = 0
+    for name, where in STARTER_PRESETS:
+        exists = conn.execute("SELECT 1 FROM presets WHERE name = ?", (name,)).fetchone()
+        if exists and not overwrite:
+            continue
+        save_preset(conn, name, {"where": where})
+        created += 1
+    return created
+
+
 def export_presets(conn, names: list[str] | None = None) -> list[dict]:
     """Return presets (all, or a named subset) in an importable pack shape."""
     everything = list_presets(conn)

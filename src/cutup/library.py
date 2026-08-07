@@ -157,6 +157,9 @@ class Library:
         root.mkdir(parents=True, exist_ok=True)
         (root / OCR_TEMPLATES_DIRNAME).mkdir(exist_ok=True)
         conn = db.initialize(db_path)
+        from . import presets as presets_mod
+        presets_mod.seed_starter_presets(conn)   # coach-ready cut-ups, day one
+        conn.commit()
         conn.close()
         Config().save(root)
         default_hudl_profile().save(root)   # a verified starting profile, ready to edit

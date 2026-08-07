@@ -27,6 +27,18 @@ class HouseProfile:
     height: int = 720
     fps: int = 30
 
+    @classmethod
+    def from_size(cls, size, fps: int = 30) -> "HouseProfile":
+        """Build a reel profile from a :class:`cutup.sizes.OutputSize`.
+
+        ``None`` or the no-resize ``source`` size falls back to 720p, since a reel
+        always normalizes to one uniform frame (unlike a single clip, it can't
+        keep each source's own resolution).
+        """
+        if size is None or getattr(size, "fit", "none") == "none":
+            return cls()
+        return cls(width=size.width, height=size.height, fps=fps)
+
 
 @dataclass
 class ReelSegment:

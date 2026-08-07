@@ -31,6 +31,7 @@ from .. import (
     filters as filters_mod,
     presets as presets_mod,
     render as render_mod,
+    sizes as sizes_mod,
 )
 from ..ingest import pbp as pbp_mod
 from ..errors import CutupError
@@ -106,6 +107,7 @@ class ExportRequest(BaseModel):
     logo_position: Optional[str] = None
     logo_scale: Optional[float] = None
     no_logo: bool = False
+    size: Optional[str] = None       # social/output size key (see cutup.sizes)
     dry_run: bool = True
 
 
@@ -478,6 +480,56 @@ def create_app(library_root: Path) -> FastAPI:
         # FileResponse honors the Range header, so the browser can seek.
         return FileResponse(path)
 
+    @app.get("/api/play/{play_id}/thumb")
+    def play_thumb(play_id: int, lib: Library = Depends(get_library)):
+        """A poster frame for a play (extracted at its start), cached on disk.
+
+        This is what makes the visual play grid a contact sheet. Untimed plays
+        (no start time yet) have no frame to grab, so they 404 and the UI shows a
+        placeholder card instead.
+        """
+        row = lib.conn.execute(
+            "SELECT p.t_start, f.path FROM plays p JOIN films f ON f.id = p.film_id "
+            "WHERE p.id = ?", (play_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No such play.")
+        if row["t_start"] is None:
+            raise HTTPException(status_code=404, detail="Play has no start time yet.")
+        film = resolve_film_path(lib.root, row["path"])
+        if not film.exists():
+            raise HTTPException(status_code=404, detail="Film file missing.")
+
+        thumbs = lib.root / "cache" / "thumbs"
+        thumbs.mkdir(parents=True, exist_ok=True)
+        out = thumbs / f"{play_id}.jpg"
+        if not out.exists():
+            import subprocess
+            ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+            # A hair into the play reads better than the exact first frame.
+            ts = max(float(row["t_start"]) + 0.3, 0.0)
+            subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                 "-ss", f"{ts:.3f}", "-i", str(film), "-frames:v", "1",
+                 "-vf", "scale=320:-2", str(out)],
+                capture_output=True, check=False,
+            )
+            if not out.exists():
+                raise HTTPException(status_code=404, detail="Could not read a frame.")
+        return FileResponse(out, media_type="image/jpeg")
+
+    @app.get("/api/export-sizes")
+    def export_sizes():
+        """Catalog of output sizes (16:9, square, 9:16 …) for clips and reels."""
+        return sizes_mod.list_sizes()
+
+    @app.post("/api/presets/seed")
+    def seed_presets(lib: Library = Depends(get_library)):
+        """Add the built-in starter cut-ups to this library (skips ones you have)."""
+        created = presets_mod.seed_starter_presets(lib.conn)
+        lib.conn.commit()
+        return {"created": created, "presets": presets_mod.list_presets(lib.conn)}
+
     # -- export ------------------------------------------------------------
 
     @app.post("/api/export")
@@ -498,8 +550,10 @@ def create_app(library_root: Path) -> FastAPI:
             lib.config, lib.root, logo=req.logo, position=req.logo_position,
             scale=req.logo_scale, no_logo=req.no_logo,
         )
+        size = sizes_mod.get_size(req.size)
+        size_vf = sizes_mod.video_filter(size)
         encoder = req.encoder or lib.config.encoder
-        if (req.accurate or watermark is not None) and encoder == "auto":
+        if (req.accurate or watermark is not None or size_vf is not None) and encoder == "auto":
             encoder = ffmpeg_mod.probe_encoders(ffmpeg).best("auto")
         tags_by_play = {r["id"]: _tags(lib.conn, r["id"]) for r in rows}
         clips = render_mod.plan_clips(
@@ -507,7 +561,7 @@ def create_app(library_root: Path) -> FastAPI:
             out_dir=Path(req.out),
             pre_roll=req.pre if req.pre is not None else lib.config.pre_roll,
             post_roll=req.post if req.post is not None else lib.config.post_roll,
-            accurate=req.accurate, encoder=encoder, watermark=watermark,
+            accurate=req.accurate, encoder=encoder, watermark=watermark, size_vf=size_vf,
             output_template=lib.config.output_template, resolve_film=resolve_film_path,
         )
         manifest = render_mod.manifest_rows(clips)

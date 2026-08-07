@@ -128,7 +128,9 @@ def test_export_dry_run_skips_untimed(client, tmp_path):
 
 
 def test_presets_crud(client):
-    assert client.get("/api/presets").json() == []
+    # A new library seeds the built-in starter cut-ups.
+    n0 = len(client.get("/api/presets").json())
+    assert n0 >= 1
     body = {"name": "3rd & long", "filter": {"where": ["down=3", "distance>=6"], "confirmed_only": True}}
     saved = client.post("/api/presets", json=body).json()
     assert saved["name"] == "3rd & long"
@@ -137,10 +139,12 @@ def test_presets_crud(client):
     # upsert by name (no duplicate)
     client.post("/api/presets", json={"name": "3rd & long", "filter": {"where": ["down=3"]}})
     listed = client.get("/api/presets").json()
-    assert len(listed) == 1 and listed[0]["filter"]["where"] == ["down=3"]
+    mine = [p for p in listed if p["name"] == "3rd & long"]
+    assert len(mine) == 1 and mine[0]["filter"]["where"] == ["down=3"]
+    assert len(listed) == n0 + 1
 
     assert client.delete("/api/presets/3rd & long").status_code == 200
-    assert client.get("/api/presets").json() == []
+    assert len(client.get("/api/presets").json()) == n0
     assert client.delete("/api/presets/nope").status_code == 404
 
 
@@ -206,16 +210,15 @@ def test_add_film_bad_type_is_400(client):
 def test_presets_export_import(client):
     client.post("/api/presets", json={"name": "runs", "filter": {"where": ["play_type=Run"]}})
     exported = client.get("/api/presets/export").json()
-    assert exported["presets"][0]["name"] == "runs"
+    assert any(p["name"] == "runs" for p in exported["presets"])
 
-    # import into a fresh notion via the same client (upsert) + a new one
     res = client.post("/api/presets/import", json={
         "presets": [{"name": "passes", "filter": {"where": ["play_type=Pass"]}}],
         "overwrite": True,
     }).json()
     assert res["imported"] == 1
     names = {p["name"] for p in client.get("/api/presets").json()}
-    assert names == {"runs", "passes"}
+    assert {"runs", "passes"} <= names   # plus the seeded starters
 
 
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")

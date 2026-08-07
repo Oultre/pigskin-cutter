@@ -123,13 +123,36 @@ def _render_filename(template: str, play_no: int | None, film_label: str,
 
 def build_argv(ffmpeg: str, film_abs: Path, t_in: float, duration: float,
                out_path: Path, *, accurate: bool, encoder: str,
-               watermark: "WatermarkSpec | None" = None) -> list[str]:
-    """Construct the exact ffmpeg command line for one clip."""
+               watermark: "WatermarkSpec | None" = None,
+               size_vf: str | None = None) -> list[str]:
+    """Construct the exact ffmpeg command line for one clip.
+
+    ``size_vf`` is an optional scale/pad filter chain (from :mod:`cutup.sizes`)
+    that re-shapes the clip to a target resolution — e.g. a 9:16 vertical for
+    Reels/TikTok. Any resize forces a re-encode; it composes with a watermark.
+    """
     common = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
 
     if watermark is not None:
-        # Burn in the logo. This always re-encodes (overlay can't stream-copy).
-        # Fast seek before -i keeps it quick; the logo is the second input.
+        if size_vf is None:
+            # Burn in the logo. This always re-encodes (overlay can't stream-copy).
+            # Fast seek before -i keeps it quick; the logo is the second input.
+            return [
+                *common,
+                "-ss", seconds_arg(t_in),
+                "-i", str(film_abs),
+                "-i", str(watermark.logo),
+                "-t", seconds_arg(duration),
+                "-filter_complex",
+                # scale2ref sizes the logo to a fraction of the main video width;
+                # h=-1 keeps the logo's own aspect ratio.
+                f"[1:v][0:v]scale2ref=w=main_w*{watermark.scale}:h=-1[wm][bg];"
+                f"[bg][wm]overlay={watermark.overlay_xy()}",
+                "-c:v", encoder,
+                "-c:a", "aac",
+                str(out_path),
+            ]
+        # Resize first (to the social size), then overlay the logo onto that frame.
         return [
             *common,
             "-ss", seconds_arg(t_in),
@@ -137,10 +160,23 @@ def build_argv(ffmpeg: str, film_abs: Path, t_in: float, duration: float,
             "-i", str(watermark.logo),
             "-t", seconds_arg(duration),
             "-filter_complex",
-            # scale2ref sizes the logo to a fraction of the main video width;
-            # h=-1 keeps the logo's own aspect ratio.
-            f"[1:v][0:v]scale2ref=w=main_w*{watermark.scale}:h=-1[wm][bg];"
-            f"[bg][wm]overlay={watermark.overlay_xy()}",
+            f"[0:v]{size_vf}[base];"
+            f"[1:v][base]scale2ref=w=main_w*{watermark.scale}:h=-1[wm][bg];"
+            f"[bg][wm]overlay={watermark.overlay_xy()}[v]",
+            "-map", "[v]", "-map", "0:a?",
+            "-c:v", encoder,
+            "-c:a", "aac",
+            str(out_path),
+        ]
+
+    if size_vf is not None:
+        # A resize re-encodes; fast seek before -i keeps it quick.
+        return [
+            *common,
+            "-ss", seconds_arg(t_in),
+            "-i", str(film_abs),
+            "-t", seconds_arg(duration),
+            "-vf", size_vf,
             "-c:v", encoder,
             "-c:a", "aac",
             str(out_path),
@@ -184,6 +220,7 @@ def plan_clips(
     output_template: str,
     resolve_film,
     watermark: "WatermarkSpec | None" = None,
+    size_vf: str | None = None,
 ) -> list[ClipSpec]:
     """Turn selected play rows into a concrete, disk-free clip plan.
 
@@ -218,8 +255,8 @@ def plan_clips(
             used_names[name] = 1
         out_path = out_dir / name
 
-        # Pre-cut clip: whole-file copy, unless a watermark forces a re-encode.
-        if is_precut and watermark is None:
+        # Pre-cut clip: whole-file copy, unless a watermark or resize forces a re-encode.
+        if is_precut and watermark is None and size_vf is None:
             t_out = row["t_end"] or 0.0
             clips.append(ClipSpec(
                 play_id=row["id"], play_no=play_no, film_label=film_label,
@@ -236,14 +273,22 @@ def plan_clips(
 
         argv = build_argv(
             ffmpeg, film_abs, t_in, max(t_out - t_in, 0.0), out_path,
-            accurate=accurate, encoder=encoder, watermark=watermark,
+            accurate=accurate, encoder=encoder, watermark=watermark, size_vf=size_vf,
         )
-        mode = "watermark" if watermark is not None else ("encode" if accurate else "copy")
+        reencode = watermark is not None or accurate or size_vf is not None
+        if watermark is not None:
+            mode = "watermark"
+        elif size_vf is not None:
+            mode = "resize"
+        elif accurate:
+            mode = "encode"
+        else:
+            mode = "copy"
         clips.append(ClipSpec(
             play_id=row["id"], play_no=play_no, film_label=film_label,
             film_abs=film_abs, out_path=out_path, t_in=t_in, t_out=t_out,
             mode=mode,
-            encoder=encoder if (watermark is not None or accurate) else None,
+            encoder=encoder if reencode else None,
             argv=argv, tags=tags,
         ))
     return clips

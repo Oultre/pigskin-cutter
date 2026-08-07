@@ -28,6 +28,7 @@ from rich.table import Table
 from . import (
     __version__, align as align_mod, db, ffmpeg as ffmpeg_mod, films as films_mod,
     filters as filters_mod, presets as presets_mod, qa as qa_mod, reel as reel_mod,
+    sizes as sizes_mod,
 )
 from .ocr.clockmap import ClockMap
 from .ocr.templates import RegionTemplate
@@ -706,6 +707,7 @@ def export(
     logo_position: Optional[str] = typer.Option(None, "--logo-position", help="bottom-right|bottom-left|top-right|top-left|center."),
     logo_scale: Optional[float] = typer.Option(None, "--logo-scale", help="Logo width as a fraction of video width."),
     no_logo: bool = typer.Option(False, "--no-logo", help="Disable branding even if the library config sets a logo."),
+    size: Optional[str] = typer.Option(None, "--size", help="Output size preset (e.g. vertical_1080, square_1080). See `cutup sizes`."),
     workers: Optional[int] = typer.Option(None, "--workers"),
     manifest: Optional[Path] = typer.Option(None, "--manifest", help="Also write the manifest as JSON here."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and ffmpeg commands, write nothing."),
@@ -753,8 +755,15 @@ def export(
 
         watermark = _resolve_watermark(lib, logo, logo_position, logo_scale, no_logo)
 
+        if size is None and output_defaults.get("size"):
+            size = output_defaults["size"]
+        size_obj = sizes_mod.get_size(size)
+        if size and size_obj is None:
+            raise CutupError(f"Unknown size {size!r}. See `cutup sizes` for the list.")
+        size_vf = sizes_mod.video_filter(size_obj)
+
         chosen_encoder = encoder or lib.config.encoder
-        if (accurate or watermark is not None) and chosen_encoder == "auto":
+        if (accurate or watermark is not None or size_vf is not None) and chosen_encoder == "auto":
             chosen_encoder = ffmpeg_mod.probe_encoders(ffmpeg).best("auto")
 
         tags_by_play = {r["id"]: _tags_for_play(lib, r["id"]) for r in rows}
@@ -762,7 +771,7 @@ def export(
             rows, tags_by_play,
             ffmpeg=ffmpeg, library_root=lib.root, out_dir=out,
             pre_roll=pre_roll, post_roll=post_roll,
-            accurate=accurate, encoder=chosen_encoder, watermark=watermark,
+            accurate=accurate, encoder=chosen_encoder, watermark=watermark, size_vf=size_vf,
             output_template=lib.config.output_template,
             resolve_film=resolve_film_path,
         )
@@ -802,6 +811,15 @@ def export(
 
 
 @app.command()
+def sizes():
+    """List output size presets for clips and reels (social-media sizes)."""
+    for s in sizes_mod.SIZES:
+        dim = "keep original" if s.fit == "none" else f"{s.width}x{s.height} ({s.fit})"
+        console.print(f"[bold]{s.key}[/bold]  {dim}  ·  {s.platform}")
+        console.print(f"    {s.label} — {s.note}")
+
+
+@app.command()
 def reel(
     out: Path = typer.Option(..., "--out", help="Output reel file (one stitched video)."),
     where: Optional[List[str]] = typer.Option(None, "--where", "-w"),
@@ -812,6 +830,7 @@ def reel(
     preset: Optional[str] = typer.Option(None, "--preset"),
     title: Optional[str] = typer.Option(None, "--title", help="Intro slate title card."),
     label: bool = typer.Option(False, "--label", help="Burn a per-play label (down & distance) onto each clip."),
+    size: Optional[str] = typer.Option(None, "--size", help="Output size preset (e.g. vertical_1080 for Reels/TikTok). See `cutup sizes`."),
     width: int = typer.Option(1280, "--width"),
     height: int = typer.Option(720, "--height"),
     fps: int = typer.Option(30, "--fps"),
@@ -835,7 +854,14 @@ def reel(
         ffprobe = ffmpeg_mod.resolve_ffprobe(lib.config)
         pre_roll = pre if pre is not None else lib.config.pre_roll
         post_roll = post if post is not None else lib.config.post_roll
-        profile = reel_mod.HouseProfile(width=width, height=height, fps=fps)
+        if size:
+            chosen = sizes_mod.get_size(size)
+            if chosen is None:
+                raise CutupError(f"Unknown size {size!r}. See `cutup sizes` for the list.")
+            profile = reel_mod.HouseProfile.from_size(chosen, fps=fps)
+        else:
+            profile = reel_mod.HouseProfile(width=width, height=height, fps=fps)
+        width, height = profile.width, profile.height
         font = reel_mod.find_font()
 
         warnings = []
@@ -1218,6 +1244,17 @@ def preset_ls(library: Optional[Path] = LibraryOpt):
     for p in rows:
         where = ", ".join(p["filter"].get("where", [])) or "(no conditions)"
         console.print(f"[bold]{p['name']}[/bold]: {where}")
+    lib.close()
+
+
+@preset_app.command("seed")
+def preset_seed(library: Optional[Path] = LibraryOpt):
+    """Add the built-in starter cut-ups (1st Down, 3rd & Long, Explosive, …)."""
+    lib = Library.open(library)
+    created = presets_mod.seed_starter_presets(lib.conn)
+    lib.conn.commit()
+    console.print(f"Added {created} starter preset(s)." if created
+                  else "All starter presets are already present.")
     lib.close()
 
 
