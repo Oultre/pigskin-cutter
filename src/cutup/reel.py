@@ -81,13 +81,23 @@ def _drawtext_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
 
 
+def _fontfile(path: str) -> str:
+    """A drawtext-safe ``fontfile=`` value for a font path.
+
+    On Windows the drive colon in ``C:/Windows/Fonts/arial.ttf`` is read by the
+    filtergraph parser as an option separator, so it must be escaped even inside
+    quotes. Backslashes become forward slashes first.
+    """
+    return path.replace("\\", "/").replace(":", r"\:")
+
+
 def _vf(prof: HouseProfile, font: str | None, label: str | None) -> str:
     # scale to fit, letterbox-pad to exact size, force fps + yuv420p
     chain = (f"scale={prof.width}:{prof.height}:force_original_aspect_ratio=decrease,"
              f"pad={prof.width}:{prof.height}:(ow-iw)/2:(oh-ih)/2,"
              f"fps={prof.fps},format=yuv420p")
     if font and label:
-        chain += (f",drawtext=fontfile='{font}':text='{_drawtext_escape(label)}'"
+        chain += (f",drawtext=fontfile='{_fontfile(font)}':text='{_drawtext_escape(label)}'"
                   f":x=(w-text_w)/2:y=h-th-24:fontsize=30:fontcolor=white"
                   f":box=1:boxcolor=black@0.55:boxborderw=10")
     return chain
@@ -113,7 +123,7 @@ def normalize_argv(ffmpeg: str, seg: ReelSegment, prof: HouseProfile,
 def slate_argv(ffmpeg: str, title: str, prof: HouseProfile, out: Path,
                font: str, seconds: float = 3.0) -> list[str]:
     """A title card: solid frame + centered text + silent audio."""
-    vf = (f"drawtext=fontfile='{font}':text='{_drawtext_escape(title)}'"
+    vf = (f"drawtext=fontfile='{_fontfile(font)}':text='{_drawtext_escape(title)}'"
           f":x=(w-text_w)/2:y=(h-th)/2:fontsize=64:fontcolor=white")
     return [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", f"color=c=black:s={prof.width}x{prof.height}:r={prof.fps}",

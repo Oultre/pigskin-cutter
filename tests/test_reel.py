@@ -37,6 +37,15 @@ def test_label_adds_drawtext():
     assert r"3\&6" in joined or "3&6" in joined   # text present (escaped)
 
 
+def test_windows_font_path_colon_is_escaped():
+    # The drive colon in a Windows font path must be escaped for ffmpeg's
+    # filtergraph, or drawtext (labels/slate) fails to parse. Regression guard.
+    from cutup.reel import _vf
+    vf = _vf(PROF, "C:/Windows/Fonts/arial.ttf", "#1 3&8")
+    assert r"fontfile='C\:/Windows/Fonts/arial.ttf'" in vf
+    assert "C:/Windows" not in vf     # the unescaped drive colon must be gone
+
+
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")
 def test_build_reel_stitches_segments(tmp_path):
     src = tmp_path / "game.mp4"
