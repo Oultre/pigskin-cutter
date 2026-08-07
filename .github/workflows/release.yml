@@ -74,17 +74,36 @@ jobs:
         run: pyinstaller pigskin-cutter.spec --noconfirm
         working-directory: packaging
 
-      - name: Rename artifact
+      # 3b. Windows only: wrap the exe in a real installer (folder picker,
+      #     Start Menu + desktop shortcuts, uninstaller) with Inno Setup.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: packaging
+        run: |
+          choco install innosetup --no-progress -y
+          $v = "${{ github.ref_name }}" -replace '^v',''
+          if ($v -notmatch '^\d') { $v = '0.0.0' }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" installer.iss
+
+      - name: Rename portable artifact
         shell: bash
         run: |
           cd packaging/dist
-          bin=$(ls PigskinCutter* | head -1)
+          bin=$(ls PigskinCutter* | grep -v Setup | head -1)   # the raw exe, not the installer
           mv "$bin" "${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
           path: packaging/dist/${{ matrix.asset }}
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PigskinCutter-Setup.exe
+          path: packaging/dist/PigskinCutter-Setup.exe
 
   release:
     needs: build
@@ -97,5 +116,10 @@ jobs:
         with:
           files: artifacts/**/*
           body: |
-            Unsigned builds. First run: right-click → Open on macOS, or
-            "More info → Run anyway" past SmartScreen on Windows. See docs/INSTALL.md.
+            **Windows:** `PigskinCutter-Setup.exe` is the installer (pick a folder,
+            get Start Menu + desktop shortcuts). `PigskinCutter-windows.exe` is the
+            no-install portable version. **macOS:** `PigskinCutter-macos`. **Linux:**
+            `PigskinCutter-linux`.
+
+            Unsigned builds. First run: "More info → Run anyway" past SmartScreen on
+            Windows, or right-click → Open on macOS. See docs/INSTALL.md.
