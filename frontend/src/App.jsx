@@ -182,7 +182,7 @@ function FolderField({ label, value, onChange, placeholder, hint }) {
           readOnly={native} onChange={native ? undefined : (e) => onChange(e.target.value)}
           onClick={native ? async () => { const p = await pickFolder(); if (p) onChange(p) } : undefined}
           style={{ flex: 1, cursor: native ? 'pointer' : 'text' }} />
-        <button className="btn primary" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }} disabled={!native}>Browse…</button>
+        <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }} disabled={!native}>Browse…</button>
         {value && <button className="btn ghost sm" onClick={() => onChange('')} title="Clear">×</button>}
       </div>
       {hint && <div className="hint2">{hint}</div>}
@@ -244,7 +244,7 @@ function Settings({ nav, flash, setError, theme, flipTheme }) {
         <p className="hint3">Your games and index live here. Films you add are copied inside this folder so everything stays together.</p>
         <div className="row" style={{ gap: 8 }}>
           <input className="inp" value={library || ''} readOnly style={{ flex: 1, opacity: 0.85 }} />
-          <button className="btn primary" disabled={!hasFolderPicker()} onClick={switchLib}>Switch…</button>
+          <button className="btn" disabled={!hasFolderPicker()} onClick={switchLib}>Switch…</button>
         </div>
         <div className="hint2">Pick another library folder to open it — or an empty folder to start a fresh one. The app reloads into it.</div>
       </div>
@@ -550,7 +550,7 @@ function ExportPanel({ filter, count, sizes, flash, setError }) {
           readOnly={hasFolderPicker()} onChange={hasFolderPicker() ? undefined : (e) => setOut(e.target.value)}
           onClick={hasFolderPicker() ? async () => { const p = await pickFolder(); if (p) setOut(p) } : undefined}
           style={{ flex: 1, cursor: hasFolderPicker() ? 'pointer' : 'text' }} />
-        {hasFolderPicker() && <button className="btn primary" onClick={async () => { const p = await pickFolder(); if (p) setOut(p) }}>Browse…</button>}
+        {hasFolderPicker() && <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) setOut(p) }}>Browse…</button>}
       </div>
       <label className="fld">Size / platform</label>
       <select className="inp full" value={size} onChange={(e) => setSize(e.target.value)}>
@@ -859,7 +859,7 @@ function FilmLibrary({ films, onChanged, flash, nav }) {
             onClick={hasNative ? browse : undefined}
             style={{ flex: 1, cursor: hasNative ? 'pointer' : 'text' }} />
           {hasNative
-            ? <button className="btn primary" onClick={browse}>Browse…</button>
+            ? <button className="btn" onClick={browse}>Browse…</button>
             : <select className="inp" value="" onChange={(e) => e.target.value && setPath(e.target.value)}>
                 <option value="">choose…</option>{available.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>}
