@@ -24,6 +24,41 @@
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
 }
 
+/* Light theme — chosen in Settings (default stays dark, the app's identity).
+   Cool-neutral greys with a hint of warmth so the Colorado red still owns the
+   accent. Tokens flip here; the few hardcoded spots are overridden below. */
+:root[data-theme="light"] {
+  --bg: #f2f2f6;
+  --bg2: #eaeaf0;
+  --panel: #ffffff;
+  --panel2: #f5f5f9;
+  --line: #e4e4ec;
+  --line2: #d0d0dc;
+  --fg: #191921;
+  --muted: #565663;
+  --dim: #83838f;
+  --red: #cc4628;
+  --red-2: #b23c22;          /* darker red reads on white; the light --red-2 did not */
+  --red-dim: #e9c6bb;
+  --teal: #12946e;
+  --amber: #9a6b09;
+  --danger: #cf3a3a;
+}
+:root[data-theme="light"] body {
+  background: radial-gradient(1100px 620px at 80% -10%, rgba(204,70,40,.07), transparent 60%), var(--bg);
+}
+:root[data-theme="light"] .topbar { background: linear-gradient(180deg, #ffffff, #f2f2f6); }
+:root[data-theme="light"] .badge.good { background: rgba(18,148,110,.12); border-color: rgba(18,148,110,.32); }
+:root[data-theme="light"] .badge.mach { background: rgba(204,70,40,.10); border-color: rgba(204,70,40,.30); }
+:root[data-theme="light"] .badge.low  { background: rgba(154,107,9,.13);  border-color: rgba(154,107,9,.32); }
+:root[data-theme="light"] .selbar { background: linear-gradient(180deg, rgba(255,255,255,.65), var(--panel)); }
+:root[data-theme="light"] .err-banner { background: #fdecec; border-bottom-color: #f3c9c9; }
+:root[data-theme="light"] .job.bad { border-color: #e7b3b3; }
+:root[data-theme="light"] .help p, :root[data-theme="light"] .help li, :root[data-theme="light"] .help dd { color: #33333d; }
+:root[data-theme="light"] .help i { color: #55555f; }
+:root[data-theme="light"] .help b, :root[data-theme="light"] .help dt, :root[data-theme="light"] .help .kbd { color: #111118; }
+:root[data-theme="light"] .home-btn b, :root[data-theme="light"] .card h3, :root[data-theme="light"] .scr-bar h2 { color: var(--fg); }
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
@@ -269,5 +304,17 @@ label.fld { display: block; font-size: 11px; color: var(--dim); margin: 10px 0 5
 .help dt { font-weight: 600; color: #fff; margin-top: .7rem; }
 .help dd { margin: .15rem 0 0; }
 .help .footer-note { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--dim); font-size: .9rem; }
+
+/* theme toggle switch (Settings) */
+.theme-switch { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.theme-switch span { font-size: 13px; color: var(--dim); }
+.theme-switch span.on { color: var(--fg); font-weight: 600; }
+.theme-switch .sw { width: 48px; height: 26px; border-radius: 999px; border: 1px solid var(--line2);
+  background: var(--panel2); position: relative; cursor: pointer; padding: 0; transition: background .18s, border-color .18s; }
+.theme-switch .sw.light { background: var(--red); border-color: var(--red); }
+.theme-switch .sw .knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--fg); transition: transform .18s ease; }
+.theme-switch .sw.light .knob { transform: translateX(22px); background: #fff; }
+.theme-switch .sw:focus-visible { outline: 2px solid var(--red-2); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

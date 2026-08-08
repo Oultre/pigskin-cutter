@@ -14,6 +14,7 @@ async function pickFolder() {
 }
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
+import { getTheme, setTheme } from './theme.js'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
 const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
@@ -94,6 +95,8 @@ export default function App() {
   const [presets, setPresets] = useState([])
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
+  const [theme, setThemeState] = useState(getTheme())
+  const flipTheme = (t) => setThemeState(setTheme(t))
 
   const flash = (m) => { setToast(m); window.clearTimeout(flash._t); flash._t = window.setTimeout(() => setToast(''), 3500) }
   const refreshFilms = () => getFilms().then(setFilms).catch((e) => setError(e.message))
@@ -130,6 +133,12 @@ export default function App() {
           </select>
         )}
         <span className="stat">{films.length} film{films.length !== 1 ? 's' : ''} · {totalPlays} plays</span>
+        <button className="gear" title={theme === 'light' ? 'Switch to dark' : 'Switch to light'} aria-label="Toggle theme"
+          onClick={() => flipTheme(theme === 'light' ? 'dark' : 'light')}>
+          {theme === 'light'
+            ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>}
+        </button>
         <button className="gear" title="Settings" onClick={() => nav('settings')} aria-label="Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.6a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 20.4 8c.14.31.22.65.22 1a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
@@ -147,7 +156,7 @@ export default function App() {
         {view === 'detect' && <AutoDetect films={films} filmId={filmId} onChanged={onDataChanged} flash={flash} nav={nav} />}
         {view === 'library' && <FilmLibrary films={films} onChanged={onDataChanged} flash={flash} nav={nav} />}
         {view === 'tag' && <div className="screen wide"><TagPass films={films} onTagged={onDataChanged} /></div>}
-        {view === 'settings' && <Settings nav={nav} flash={flash} setError={setError} />}
+        {view === 'settings' && <Settings nav={nav} flash={flash} setError={setError} theme={theme} flipTheme={flipTheme} />}
         {view === 'help' && <Help />}
       </div>
 
@@ -176,7 +185,21 @@ function FolderField({ label, value, onChange, placeholder, hint }) {
   )
 }
 
-function Settings({ nav, flash, setError }) {
+function ThemeSwitch({ theme, onChange }) {
+  const light = theme === 'light'
+  return (
+    <div className="theme-switch">
+      <span className={!light ? 'on' : ''}>Dark</span>
+      <button role="switch" aria-checked={light} className={'sw' + (light ? ' light' : '')}
+        onClick={() => onChange(light ? 'dark' : 'light')} aria-label="Toggle light mode">
+        <span className="knob" />
+      </button>
+      <span className={light ? 'on' : ''}>Light</span>
+    </div>
+  )
+}
+
+function Settings({ nav, flash, setError, theme, flipTheme }) {
   const [cfg, setCfg] = useState(null)
   const [clips, setClips] = useState('')
   const [reels, setReels] = useState('')
@@ -211,7 +234,8 @@ function Settings({ nav, flash, setError }) {
       </div>
       <div className="form-card">
         <h4 style={{ margin: '0 0 4px' }}>Appearance</h4>
-        <p className="hint3">Pigskin Cutter uses a dark theme. A light-mode option is on the way.</p>
+        <p className="hint3">Prefer a lighter look? Flip it here. Your choice is remembered.</p>
+        <ThemeSwitch theme={theme} onChange={flipTheme} />
       </div>
     </div>
   )
