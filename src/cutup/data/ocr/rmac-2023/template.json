@@ -7,6 +7,8 @@
     {"name": "quarter",       "x": 0.562, "y": 0.893, "w": 0.016, "h": 0.048, "polarity": "light", "whitelist": "0123456789"},
     {"name": "game_clock",    "x": 0.600, "y": 0.893, "w": 0.062, "h": 0.048, "polarity": "light", "whitelist": "0123456789:"},
     {"name": "play_clock",    "x": 0.688, "y": 0.893, "w": 0.037, "h": 0.048, "polarity": "light", "whitelist": "0123456789"},
-    {"name": "down_distance", "x": 0.730, "y": 0.893, "w": 0.090, "h": 0.048, "polarity": "light", "whitelist": null}
+    {"name": "down_distance", "x": 0.730, "y": 0.893, "w": 0.090, "h": 0.048, "polarity": "light", "whitelist": null},
+    {"name": "down_num",      "x": 0.730, "y": 0.895, "w": 0.014, "h": 0.044, "polarity": "light", "whitelist": "1234"},
+    {"name": "dist_num",      "x": 0.782, "y": 0.895, "w": 0.038, "h": 0.044, "polarity": "light", "whitelist": "0123456789"}
   ]
 }

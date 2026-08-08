@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
   getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
-  deleteFilm, importFilm, importPbp, findSchedule, startAlign, startDetect, getJob, getJobs, getExportSizes, startReel,
+  deleteFilm, importFilm, importPbp, findSchedule, startAlign, startDetect, startVerify, getJob, getJobs, getExportSizes, startReel,
   getConfig, saveConfig,
 } from './api.js'
 
@@ -327,6 +327,12 @@ function PlaysScreen({ films, filmId, tagKeys, presets, sizes, refreshPresets, s
     setForm(f); load(formToQuery(f, filmId))
   }
   const applyForm = () => { setActivePreset(''); load(formToQuery(form, filmId)) }
+  const applyVerified = () => {
+    setActivePreset('__verified')
+    const f = { preds: [{ key: 'verify', op: '=', value: 'match' }], film: '', source: '', minConf: '', confirmedOnly: false }
+    setForm(f); load(formToQuery(f, filmId))
+  }
+  const anyVerified = plays.some((p) => p.tags.verify)
 
   const toggleSel = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const clearSel = () => setSelected(new Set())
@@ -357,6 +363,7 @@ function PlaysScreen({ films, filmId, tagKeys, presets, sizes, refreshPresets, s
       <div className="presets">
         <span className="plabel">Suggested cuts</span>
         <span className={'chip' + (activePreset === '' ? ' on' : '')} onClick={() => applyPreset(null)}>All plays</span>
+        {anyVerified && <span className={'chip' + (activePreset === '__verified' ? ' on' : '')} onClick={applyVerified} title="Only plays whose down & distance matched the video">✓ Verified only</span>}
         {presets.map((p) => (
           <span key={p.name} className={'chip' + (activePreset === p.name ? ' on' : '')} onClick={() => applyPreset(p)}>
             {p.name}{counts[p.name] != null && <span className="n">{counts[p.name]}</span>}
@@ -427,9 +434,13 @@ function PlaysScreen({ films, filmId, tagKeys, presets, sizes, refreshPresets, s
 function PlayCard({ p, selected, active, onOpen, onToggle }) {
   const [imgOk, setImgOk] = useState(true)
   const timed = p.t_start != null && p.t_end != null
-  const badge = p.source === 'pbp' || p.source === 'ocr' || p.source === 'detected'
-    ? (p.confidence < 0.8 ? ['low', 'CHECK'] : ['mach', p.source === 'ocr' ? 'OCR' : 'AUTO'])
-    : ['good', 'MATCHED']
+  const vf = p.tags.verify
+  const badge = vf === 'match' ? ['good', 'VERIFIED']
+    : vf === 'mismatch' ? ['low', 'REVIEW']
+    : vf === 'unread' ? ['neutral', 'UNCHECKED']
+    : (p.source === 'pbp' || p.source === 'ocr' || p.source === 'detected')
+      ? (p.confidence < 0.8 ? ['low', 'CHECK'] : ['mach', p.source === 'ocr' ? 'OCR' : 'AUTO'])
+      : ['good', 'MATCHED']
   const dur = timed ? (p.t_end - p.t_start).toFixed(1) + 's' : null
   return (
     <div className={'play' + (selected ? ' sel' : '') + (active ? ' active' : '')} onClick={onOpen}>
@@ -702,9 +713,11 @@ function DataGrab({ films, filmId, onChanged, flash, nav }) {
 function AutoDetect({ films, filmId, onChanged, flash, nav }) {
   const [film, setFilm] = useState(filmId || '')
   const [film2, setFilm2] = useState(filmId || '')
+  const [film3, setFilm3] = useState(filmId || '')
   const [sens, setSens] = useState('0.4')
   const [job, setJob] = useState(null)      // clock job
   const [job2, setJob2] = useState(null)    // scene job
+  const [jobV, setJobV] = useState(null)    // verify job
   const [error, setError] = useState('')
   const polls = useRef({})
   useEffect(() => () => Object.values(polls.current).forEach(clearInterval), [])
@@ -729,10 +742,11 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
       const r = all.find((j) => j.status === 'running')
       if (!r) return
       if (r.kind === 'detect') { setJob2(r); watch(r.id, setJob2) }
+      else if (r.kind === 'verify') { setJobV(r); watch(r.id, setJobV) }
       else if (r.kind === 'align') { setJob(r); watch(r.id, setJob) }
     }).catch(() => {})
   }, [])
-  const running = (job && job.status === 'running') || (job2 && job2.status === 'running')
+  const running = [job, job2, jobV].some((j) => j && j.status === 'running')
   return (
     <div className="screen">
       <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span><h2>Auto Detect <span className="count">· find plays automatically</span></h2></div>
@@ -770,6 +784,24 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
         {job2 && <div className={'job' + (job2.status === 'failed' ? ' bad' : '')}>
           {job2.message}
           {job2.status === 'running' && <div>{job2.processed}s of film scanned…</div>}
+        </div>}
+      </div>
+
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 6px' }}>Check the alignment against the video</h4>
+        <p className="hint3">Auto-align places plays approximately. This reads each placed play's down &amp; distance off the video and compares it to the play-by-play, so every play in the grid is marked <b>Verified</b>, <b>Review</b>, or <b>Unchecked</b> — you cut the verified ones with confidence and eyeball the rest.</p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <select className="inp" style={{ flex: 1 }} value={film3} disabled={running} onChange={(e) => setFilm3(e.target.value)}>
+            <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+          </select>
+          <button className="btn primary" disabled={!film3 || running} onClick={() => runJob(() => startVerify({ film_id: Number(film3) }), setJobV)}>{jobV && jobV.status === 'running' ? 'Checking…' : 'Verify plays'}</button>
+        </div>
+        {jobV && <div className={'job' + (jobV.status === 'failed' ? ' bad' : '')}>
+          {jobV.message}
+          {jobV.status === 'running' && jobV.total > 0 && <>
+            <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.round(100 * jobV.done / jobV.total)}%` }} /></div>
+            <div>{jobV.done} of {jobV.total} checked · <span style={{ color: 'var(--teal)' }}>{jobV.match} verified</span> · <span style={{ color: 'var(--amber)' }}>{jobV.mismatch} review</span> · {jobV.unread} unread</div>
+          </>}
         </div>}
       </div>
       {error && <div className="error" style={{ maxWidth: 720 }}>{error}</div>}

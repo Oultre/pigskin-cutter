@@ -28,7 +28,7 @@ from rich.table import Table
 from . import (
     __version__, align as align_mod, db, ffmpeg as ffmpeg_mod, films as films_mod,
     filters as filters_mod, presets as presets_mod, qa as qa_mod, reel as reel_mod,
-    scenedetect as sd_mod, sizes as sizes_mod,
+    scenedetect as sd_mod, sizes as sizes_mod, verify as verify_mod,
 )
 from .ocr.clockmap import ClockMap
 from .ocr.templates import RegionTemplate
@@ -849,6 +849,46 @@ def detect(
                              "VALUES (?,?,?,?, 'detected', 0.5)", (film, nxt + i, a, b))
         lib.conn.commit()
         console.print(f"[green]Added {len(segs)} detected plays.[/green]")
+    finally:
+        lib.close()
+
+
+@app.command()
+def verify(
+    film: int = typer.Option(..., "--film", help="Film id whose placed plays to verify."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Check placed plays' down & distance against the video (verify alignment)."""
+    from .ocr import scan as scan_mod
+    from .ocr.scan import load_bundled_glyphs, load_bundled_template
+    lib = Library.open(library)
+    try:
+        row = lib.conn.execute("SELECT path, duration FROM films WHERE id = ?", (film,)).fetchone()
+        if row is None:
+            raise CutupError(f"No film with id {film}.")
+        video = resolve_film_path(lib.root, row["path"])
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        package = scan_mod.pick_package(ffmpeg, video, row["duration"])
+        if package is None:
+            raise CutupError("Couldn't read this broadcast's score bug to verify against.")
+        tpl = load_bundled_template(package)
+        gly = load_bundled_glyphs(package)
+        if tpl.region("down_num") is None:
+            raise CutupError(f"Template {package!r} has no down/distance regions to verify against.")
+        rows = lib.conn.execute(
+            "SELECT p.id, p.play_no, p.t_start, "
+            "(SELECT value FROM tags WHERE play_id=p.id AND key='down') AS dn, "
+            "(SELECT value FROM tags WHERE play_id=p.id AND key='distance') AS di "
+            "FROM plays p WHERE p.film_id=? AND p.t_start IS NOT NULL "
+            "AND p.source IN ('detected','ocr','pbp') ORDER BY p.play_no", (film,)).fetchall()
+        if not rows:
+            console.print("No auto-placed plays to verify. Run `cutup align` first.")
+            return
+        console.print(f"Checking {len(rows)} plays against the video…")
+        tally = verify_mod.verify_and_store(lib.conn, ffmpeg, video, tpl, gly, rows)
+        lib.conn.commit()
+        console.print(f"[green]Verified[/green]: {tally['match']} match the video, "
+                      f"{tally['mismatch']} need review, {tally['unread']} couldn't be read.")
     finally:
         lib.close()
 

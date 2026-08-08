@@ -101,6 +101,10 @@ class DetectRequest(BaseModel):
     max_len: float = 45.0
 
 
+class VerifyRequest(BaseModel):
+    film_id: int
+
+
 class ReelRequest(BaseModel):
     out: Optional[str] = None            # output file; defaults to <library>/reels/…
     where: list[str] = []
@@ -301,6 +305,62 @@ def _detect_job(root: Path, job_id: str, jobs: dict, req: "DetectRequest") -> No
         lib.conn.commit()
         job.update(status="done", phase="done", placed=len(segments),
                    message=f"Found {len(segments)} plays from scene cuts.")
+    except Exception as exc:
+        job.update(status="failed", phase="done", message=str(exc))
+    finally:
+        job["finished"] = datetime.now().isoformat(timespec="seconds")
+        if lib is not None:
+            lib.close()
+
+
+def _verify_job(root: Path, job_id: str, jobs: dict, film_id: int) -> None:
+    """Check each placed play's down & distance against the video, in a thread."""
+    from .. import verify as verify_mod
+    from ..ocr import scan as scan_mod
+    from ..ocr.scan import load_bundled_glyphs, load_bundled_template
+
+    job = jobs[job_id]
+    lib = None
+    try:
+        lib = Library.open(root)
+        row = lib.conn.execute("SELECT path, duration FROM films WHERE id = ?", (film_id,)).fetchone()
+        video = resolve_film_path(lib.root, row["path"])
+        ffmpeg = ffmpeg_mod.resolve_ffmpeg(lib.config)
+        package = scan_mod.pick_package(ffmpeg, video, row["duration"])
+        if package is None:
+            job.update(status="failed", phase="done",
+                       message="Can't read this broadcast's score bug to verify against.")
+            return
+        template = load_bundled_template(package)
+        glyphs = load_bundled_glyphs(package)
+        if template.region("down_num") is None:
+            job.update(status="failed", phase="done",
+                       message="This template can't read down & distance yet, so there's nothing to verify against.")
+            return
+
+        rows = lib.conn.execute(
+            "SELECT p.id, p.play_no, p.t_start, "
+            "(SELECT value FROM tags WHERE play_id=p.id AND key='down') AS dn, "
+            "(SELECT value FROM tags WHERE play_id=p.id AND key='distance') AS di "
+            "FROM plays p WHERE p.film_id=? AND p.t_start IS NOT NULL "
+            "AND p.source IN ('detected','ocr','pbp') ORDER BY p.play_no", (film_id,)
+        ).fetchall()
+        if not rows:
+            job.update(status="failed", phase="done",
+                       message="No auto-placed plays to verify. Run Auto-align first.")
+            return
+
+        job.update(phase="verifying", total=len(rows), done=0,
+                   message=f"Checking {len(rows)} plays against the video…")
+
+        def progress(done, tally):
+            job.update(done=done, **tally)
+
+        tally = verify_mod.verify_and_store(lib.conn, ffmpeg, video, template, glyphs, rows, progress)
+        lib.conn.commit()
+        job.update(status="done", phase="done", message=(
+            f"Verified: {tally['match']} match the video, {tally['mismatch']} need review, "
+            f"{tally['unread']} couldn't be read."), **tally)
     except Exception as exc:
         job.update(status="failed", phase="done", message=str(exc))
     finally:
@@ -590,6 +650,21 @@ def create_app(library_root: Path) -> FastAPI:
                         "processed": 0, "placed": 0, "message": "Starting…",
                         "started": datetime.now().isoformat(timespec="seconds")}
         threading.Thread(target=_detect_job, args=(app.state.library_root, job_id, jobs, body),
+                         daemon=True).start()
+        return jobs[job_id]
+
+    @app.post("/api/verify")
+    def start_verify(body: VerifyRequest, lib: Library = Depends(get_library)):
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (body.film_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="No such film.")
+        jobs = app.state.jobs
+        if any(j["status"] == "running" for j in jobs.values()):
+            raise HTTPException(status_code=409, detail="A job is already running.")
+        job_id = uuid.uuid4().hex[:8]
+        jobs[job_id] = {"id": job_id, "kind": "verify", "status": "running", "phase": "starting",
+                        "done": 0, "total": 0, "match": 0, "mismatch": 0, "unread": 0,
+                        "message": "Starting…", "started": datetime.now().isoformat(timespec="seconds")}
+        threading.Thread(target=_verify_job, args=(app.state.library_root, job_id, jobs, body.film_id),
                          daemon=True).start()
         return jobs[job_id]
 

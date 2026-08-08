@@ -60,6 +60,12 @@ export const startDetect = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(j)
+export const startVerify = (body) =>
+  fetch('/api/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
 export const getJob = (id) => fetch('/api/jobs/' + id).then(j)
 export const getJobs = () => fetch('/api/jobs').then(j)
 export const getTagKeys = () => fetch('/api/tag-keys').then(j)

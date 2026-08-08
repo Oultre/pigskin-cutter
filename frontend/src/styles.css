@@ -185,6 +185,7 @@ label.fld { display: block; font-size: 11px; color: var(--dim); margin: 10px 0 5
 .badge.good { background: rgba(45,212,167,.14); color: var(--teal); border: 1px solid rgba(45,212,167,.3); }
 .badge.mach { background: rgba(204,70,40,.16); color: var(--red-2); border: 1px solid rgba(204,70,40,.34); }
 .badge.low { background: rgba(232,177,58,.14); color: var(--amber); border: 1px solid rgba(232,177,58,.32); }
+.badge.neutral { background: var(--panel2); color: var(--dim); border: 1px solid var(--line2); }
 .play .check { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%;
   background: var(--red); display: none; place-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
 .play.sel .check { display: grid; }
