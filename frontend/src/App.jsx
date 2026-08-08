@@ -171,13 +171,17 @@ function titleFor(v) {
 
 // -- SETTINGS ---------------------------------------------------------------
 function FolderField({ label, value, onChange, placeholder, hint }) {
+  const native = hasFolderPicker()
   return (
     <div style={{ marginBottom: 16 }}>
       <label className="fld">{label}</label>
       <div className="row" style={{ gap: 8 }}>
-        <input className="inp" style={{ flex: 1 }} value={value || ''} placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)} />
-        {hasFolderPicker() && <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }}>Browse\u2026</button>}
+        <input className="inp" value={value || ''}
+          placeholder={native ? 'Click Browse to choose a folder\u2026' : placeholder}
+          readOnly={native} onChange={native ? undefined : (e) => onChange(e.target.value)}
+          onClick={native ? async () => { const p = await pickFolder(); if (p) onChange(p) } : undefined}
+          style={{ flex: 1, cursor: native ? 'pointer' : 'text' }} />
+        <button className="btn primary" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }} disabled={!native}>Browse\u2026</button>
         {value && <button className="btn ghost sm" onClick={() => onChange('')} title="Clear">\u00d7</button>}
       </div>
       {hint && <div className="hint2">{hint}</div>}
@@ -529,7 +533,11 @@ function ExportPanel({ filter, count, sizes, flash, setError }) {
   return (
     <div className="export">
       <div className="row" style={{ gap: 8 }}>
-        <input className="inp" style={{ flex: 1 }} placeholder="output folder (e.g. C:\cutups)" value={out} onChange={(e) => setOut(e.target.value)} />
+        <input className="inp" value={out}
+          placeholder={hasFolderPicker() ? 'Click Browse to choose a folder…' : 'output folder (e.g. C:\\cutups)'}
+          readOnly={hasFolderPicker()} onChange={hasFolderPicker() ? undefined : (e) => setOut(e.target.value)}
+          onClick={hasFolderPicker() ? async () => { const p = await pickFolder(); if (p) setOut(p) } : undefined}
+          style={{ flex: 1, cursor: hasFolderPicker() ? 'pointer' : 'text' }} />
         {hasFolderPicker() && <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) setOut(p) }}>Browse…</button>}
       </div>
       <label className="fld">Size / platform</label>

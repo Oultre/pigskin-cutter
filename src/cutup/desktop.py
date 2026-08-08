@@ -56,6 +56,22 @@ VIDEO_FILE_TYPES = (
 )
 
 
+def _dialog_type(kind: str):
+    """Native dialog type constant: modern ``FileDialog`` enum, else the old one.
+
+    pywebview 6 renamed ``OPEN_DIALOG``/``FOLDER_DIALOG`` to ``FileDialog.OPEN`` /
+    ``FileDialog.FOLDER`` (the old names still work but warn). ``kind`` is "OPEN"
+    or "FOLDER".
+    """
+    import webview
+
+    try:
+        from webview import FileDialog
+        return getattr(FileDialog, kind)
+    except Exception:
+        return getattr(webview, f"{kind}_DIALOG")
+
+
 class DesktopApi:
     """Methods callable from the page as ``window.pywebview.api.<name>()``.
 
@@ -72,7 +88,7 @@ class DesktopApi:
         import webview
 
         result = webview.windows[0].create_file_dialog(
-            webview.OPEN_DIALOG, directory=self.library_root,
+            _dialog_type("OPEN"), directory=self.library_root,
             allow_multiple=False, file_types=VIDEO_FILE_TYPES,
         )
         if not result:
@@ -88,7 +104,7 @@ class DesktopApi:
         import webview
 
         result = webview.windows[0].create_file_dialog(
-            webview.FOLDER_DIALOG, directory=self.library_root)
+            _dialog_type("FOLDER"), directory=self.library_root)
         if not result:
             return None
         return result[0] if isinstance(result, (list, tuple)) else result
