@@ -19,6 +19,12 @@ export const saveConfig = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(j)
+export const switchLibrary = (path) =>
+  fetch('/api/library/switch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  }).then(j)
 export const getLibraryFilms = () => fetch('/api/library-films').then(j)
 export const registerFilm = (body) =>
   fetch('/api/films', {

@@ -76,6 +76,10 @@ class ConfigUpdate(BaseModel):
     post_roll: Optional[float] = None
 
 
+class LibrarySwitch(BaseModel):
+    path: str
+
+
 class PresetImport(BaseModel):
     presets: list[dict] = []
     overwrite: bool = True
@@ -449,6 +453,31 @@ def create_app(library_root: Path) -> FastAPI:
     @app.get("/api/config")
     def config(lib: Library = Depends(get_library)):
         return {"library": str(lib.root), **vars(lib.config)}
+
+    @app.post("/api/library/switch")
+    def switch_library(body: LibrarySwitch):
+        """Open a different library folder (or create one there), moving the lock.
+
+        Points every following request at the new library. An empty folder becomes
+        a fresh library; an existing one is opened. The UI reloads afterward.
+        """
+        from ..library import acquire_lock, release_lock
+
+        new_root = Path(body.path).resolve()
+        if not (new_root / db.DB_FILENAME).exists():
+            Library.init(new_root)                 # fresh library in an empty folder
+        else:
+            Library.open(new_root).close()         # validate it opens
+        old_root = app.state.library_root
+        if new_root == Path(old_root).resolve():
+            return {"library": str(new_root)}
+        acquire_lock(new_root)                      # refuses if another writer holds it
+        try:
+            release_lock(old_root)
+        except Exception:
+            pass
+        app.state.library_root = new_root
+        return {"library": str(new_root)}
 
     @app.post("/api/config")
     def update_config(body: ConfigUpdate, lib: Library = Depends(get_library)):

@@ -15,6 +15,7 @@ async function pickFolder() {
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
 import { getTheme, setTheme } from './theme.js'
+import { switchLibrary } from './api.js'
 
 const OPS = ['=', '!=', '>=', '<=', '>', '<', 'exists']
 const emptyForm = { preds: [], film: '', source: '', minConf: '', confirmedOnly: false }
@@ -216,6 +217,14 @@ function Settings({ nav, flash, setError, theme, flipTheme }) {
     try { await saveConfig({ clips_dir: clips, reels_dir: reels }); flash('Settings saved') }
     catch (e) { setError(e.message) } finally { setBusy(false) }
   }
+  const switchLib = async () => {
+    const p = await pickFolder()
+    if (!p) return
+    if (!window.confirm(`Open this folder as your library?\n\n${p}\n\nAn empty folder starts a fresh library. The app will reload.`)) return
+    setError('')
+    try { await switchLibrary(p); window.location.reload() }
+    catch (e) { setError(e.message) }
+  }
   const library = cfg && (cfg.library || null)
   return (
     <div className="screen">
@@ -233,8 +242,11 @@ function Settings({ nav, flash, setError, theme, flipTheme }) {
       <div className="form-card">
         <h4 style={{ margin: '0 0 4px' }}>Your film library</h4>
         <p className="hint3">Your games and index live here. Films you add are copied inside this folder so everything stays together.</p>
-        <input className="inp full" value={library || ''} readOnly style={{ opacity: 0.8 }} />
-        <div className="hint2">To use a different library folder, launch the app pointed at it (a “switch library” button is coming).</div>
+        <div className="row" style={{ gap: 8 }}>
+          <input className="inp" value={library || ''} readOnly style={{ flex: 1, opacity: 0.85 }} />
+          <button className="btn primary" disabled={!hasFolderPicker()} onClick={switchLib}>Switch…</button>
+        </div>
+        <div className="hint2">Pick another library folder to open it — or an empty folder to start a fresh one. The app reloads into it.</div>
       </div>
       <div className="form-card">
         <h4 style={{ margin: '0 0 4px' }}>Appearance</h4>
@@ -538,7 +550,7 @@ function ExportPanel({ filter, count, sizes, flash, setError }) {
           readOnly={hasFolderPicker()} onChange={hasFolderPicker() ? undefined : (e) => setOut(e.target.value)}
           onClick={hasFolderPicker() ? async () => { const p = await pickFolder(); if (p) setOut(p) } : undefined}
           style={{ flex: 1, cursor: hasFolderPicker() ? 'pointer' : 'text' }} />
-        {hasFolderPicker() && <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) setOut(p) }}>Browse…</button>}
+        {hasFolderPicker() && <button className="btn primary" onClick={async () => { const p = await pickFolder(); if (p) setOut(p) }}>Browse…</button>}
       </div>
       <label className="fld">Size / platform</label>
       <select className="inp full" value={size} onChange={(e) => setSize(e.target.value)}>

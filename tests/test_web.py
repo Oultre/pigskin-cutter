@@ -159,6 +159,16 @@ def test_config_endpoint_exposes_tag_fields(client):
     assert "library" in cfg
 
 
+def test_switch_library_opens_a_fresh_folder(client, tmp_path):
+    other = tmp_path / "other-library"
+    r = client.post("/api/library/switch", json={"path": str(other)}).json()
+    assert r["library"].replace("\\", "/").endswith("other-library")
+    # every following request now targets the new library
+    assert client.get("/api/config").json()["library"].replace("\\", "/").endswith("other-library")
+    assert client.get("/api/films").json() == []                 # fresh: no films
+    assert len(client.get("/api/presets").json()) >= 1           # but starter presets seeded
+
+
 def test_config_update_saves_and_clears_folders(client):
     r = client.post("/api/config", json={"clips_dir": "C:/Cutups", "reels_dir": "D:/Reels"}).json()
     assert r["clips_dir"] == "C:/Cutups" and r["reels_dir"] == "D:/Reels"
