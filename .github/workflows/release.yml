@@ -47,20 +47,23 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p src/cutup/bin/linux
-          curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ff.tar.xz
-          tar xf ff.tar.xz --strip-components=1 -C src/cutup/bin/linux --wildcards '*/ffmpeg' '*/ffprobe'
+          # GitHub-hosted BtbN static build (reliable; same source as Windows).
+          curl -L --retry 4 --retry-delay 5 --retry-all-errors https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz -o ff.tar.xz
+          tar xf ff.tar.xz
+          cp ffmpeg-*-linux64-gpl/bin/ffmpeg ffmpeg-*-linux64-gpl/bin/ffprobe src/cutup/bin/linux/
+          chmod +x src/cutup/bin/linux/ffmpeg src/cutup/bin/linux/ffprobe
       - name: Bundle ffmpeg (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p src/cutup/bin/darwin
-          curl -L https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip && unzip -o ffmpeg.zip -d src/cutup/bin/darwin
-          curl -L https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip -o ffprobe.zip && unzip -o ffprobe.zip -d src/cutup/bin/darwin
+          curl -L --retry 4 --retry-delay 5 --retry-all-errors https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip && unzip -o ffmpeg.zip -d src/cutup/bin/darwin
+          curl -L --retry 4 --retry-delay 5 --retry-all-errors https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip -o ffprobe.zip && unzip -o ffprobe.zip -d src/cutup/bin/darwin
       - name: Bundle ffmpeg (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p src/cutup/bin/win32
-          curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -o ff.zip
+          curl -L --retry 4 --retry-delay 5 --retry-all-errors https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -o ff.zip
           unzip -o ff.zip -d fftmp
           cp fftmp/*/bin/ffmpeg.exe fftmp/*/bin/ffprobe.exe src/cutup/bin/win32/
 
