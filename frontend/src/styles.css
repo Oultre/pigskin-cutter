@@ -52,6 +52,10 @@ button { font-family: inherit; }
 .topbar .stat { color: var(--dim); font-size: 12.5px; }
 .topbar .film-sel { background: var(--panel); color: var(--fg); border: 1px solid var(--line2);
   border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 260px; }
+.topbar .gear { background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer;
+  padding: 5px; border-radius: 8px; display: grid; place-items: center; }
+.topbar .gear:hover { color: var(--fg); border-color: var(--line2); }
+.topbar .gear svg { width: 19px; height: 19px; }
 
 .body { flex: 1; min-height: 0; overflow: auto; }
 

@@ -13,6 +13,12 @@ export const getDiagnostics = () => fetch('/api/diagnostics').then(j)
 export const getFilms = () => fetch('/api/films').then(j)
 export const getSourceTypes = () => fetch('/api/source-types').then(j)
 export const getConfig = () => fetch('/api/config').then(j)
+export const saveConfig = (body) =>
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
 export const getLibraryFilms = () => fetch('/api/library-films').then(j)
 export const registerFilm = (body) =>
   fetch('/api/films', {

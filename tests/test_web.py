@@ -156,6 +156,16 @@ def test_source_types_endpoint(client):
 def test_config_endpoint_exposes_tag_fields(client):
     cfg = client.get("/api/config").json()
     assert isinstance(cfg["tag_fields"], list) and "distance" in cfg["tag_fields"]
+    assert "library" in cfg
+
+
+def test_config_update_saves_and_clears_folders(client):
+    r = client.post("/api/config", json={"clips_dir": "C:/Cutups", "reels_dir": "D:/Reels"}).json()
+    assert r["clips_dir"] == "C:/Cutups" and r["reels_dir"] == "D:/Reels"
+    assert client.get("/api/config").json()["clips_dir"] == "C:/Cutups"   # persisted
+    client.post("/api/config", json={"clips_dir": "   "})                 # blank clears it
+    assert client.get("/api/config").json()["clips_dir"] is None
+    assert client.get("/api/config").json()["reels_dir"] == "D:/Reels"    # untouched
 
 
 def test_pbp_import_endpoint(client):

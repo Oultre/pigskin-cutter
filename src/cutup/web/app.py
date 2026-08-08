@@ -69,6 +69,13 @@ class FilmImport(BaseModel):
     source_type: str = "broadcast"
 
 
+class ConfigUpdate(BaseModel):
+    clips_dir: Optional[str] = None
+    reels_dir: Optional[str] = None
+    pre_roll: Optional[float] = None
+    post_roll: Optional[float] = None
+
+
 class PresetImport(BaseModel):
     presets: list[dict] = []
     overwrite: bool = True
@@ -441,7 +448,19 @@ def create_app(library_root: Path) -> FastAPI:
 
     @app.get("/api/config")
     def config(lib: Library = Depends(get_library)):
-        return vars(lib.config)
+        return {"library": str(lib.root), **vars(lib.config)}
+
+    @app.post("/api/config")
+    def update_config(body: ConfigUpdate, lib: Library = Depends(get_library)):
+        """Save chosen settings (default save folders, clip padding) to the library."""
+        cfg = lib.config
+        for key, val in body.model_dump(exclude_unset=True).items():
+            # blank string clears a folder back to the default
+            if isinstance(val, str) and not val.strip():
+                val = None
+            setattr(cfg, key, val)
+        cfg.save(lib.root)
+        return {"library": str(lib.root), **vars(cfg)}
 
     @app.get("/api/library-films")
     def library_films(lib: Library = Depends(get_library)):
@@ -555,7 +574,7 @@ def create_app(library_root: Path) -> FastAPI:
             if not out.is_absolute():
                 out = lib.root / out
         else:
-            reels = lib.root / "reels"
+            reels = Path(lib.config.reels_dir) if lib.config.reels_dir else lib.root / "reels"
             reels.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             out = reels / f"reel-{stamp}.mp4"

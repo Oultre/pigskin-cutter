@@ -3,7 +3,15 @@ import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
   getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
   deleteFilm, importFilm, importPbp, findSchedule, startAlign, startDetect, getJob, getJobs, getExportSizes, startReel,
+  getConfig, saveConfig,
 } from './api.js'
+
+// Native folder picker (desktop app only); returns a path or null.
+const hasFolderPicker = () => typeof window !== 'undefined' && window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder
+async function pickFolder() {
+  if (!hasFolderPicker()) return null
+  try { return await window.pywebview.api.pick_folder() } catch { return null }
+}
 import TagPass from './TagPass.jsx'
 import Help from './Help.jsx'
 
@@ -122,6 +130,9 @@ export default function App() {
           </select>
         )}
         <span className="stat">{films.length} film{films.length !== 1 ? 's' : ''} · {totalPlays} plays</span>
+        <button className="gear" title="Settings" onClick={() => nav('settings')} aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.6a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 20.4 8c.14.31.22.65.22 1a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
       </header>
 
       {error && <div className="err-banner">{error}</div>}
@@ -136,6 +147,7 @@ export default function App() {
         {view === 'detect' && <AutoDetect films={films} filmId={filmId} onChanged={onDataChanged} flash={flash} nav={nav} />}
         {view === 'library' && <FilmLibrary films={films} onChanged={onDataChanged} flash={flash} nav={nav} />}
         {view === 'tag' && <div className="screen wide"><TagPass films={films} onTagged={onDataChanged} /></div>}
+        {view === 'settings' && <Settings nav={nav} flash={flash} setError={setError} />}
         {view === 'help' && <Help />}
       </div>
 
@@ -145,7 +157,64 @@ export default function App() {
 }
 function titleFor(v) {
   return { plays: 'Clip Cutter', data: 'Data Grab', detect: 'Auto Detect',
-    library: 'Film Library', tag: 'Tag Pass', help: 'Coach\u2019s Guide' }[v] || ''
+    library: 'Film Library', tag: 'Tag Pass', settings: 'Settings', help: 'Coach\u2019s Guide' }[v] || ''
+}
+
+// -- SETTINGS ---------------------------------------------------------------
+function FolderField({ label, value, onChange, placeholder, hint }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label className="fld">{label}</label>
+      <div className="row" style={{ gap: 8 }}>
+        <input className="inp" style={{ flex: 1 }} value={value || ''} placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)} />
+        {hasFolderPicker() && <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }}>Browse\u2026</button>}
+        {value && <button className="btn ghost sm" onClick={() => onChange('')} title="Clear">\u00d7</button>}
+      </div>
+      {hint && <div className="hint2">{hint}</div>}
+    </div>
+  )
+}
+
+function Settings({ nav, flash, setError }) {
+  const [cfg, setCfg] = useState(null)
+  const [clips, setClips] = useState('')
+  const [reels, setReels] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    getConfig().then((c) => { setCfg(c); setClips(c.clips_dir || ''); setReels(c.reels_dir || '') }).catch((e) => setError(e.message))
+  }, [])
+  const save = async () => {
+    setBusy(true); setError('')
+    try { await saveConfig({ clips_dir: clips, reels_dir: reels }); flash('Settings saved') }
+    catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+  const library = cfg && (cfg.library || null)
+  return (
+    <div className="screen">
+      <div className="scr-bar"><span className="back" onClick={() => nav('home')}>\u2039 Home</span><h2>Settings</h2></div>
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 4px' }}>Where things are saved</h4>
+        <p className="hint3">Set these once and they fill in automatically. You can still pick a different folder at export time.</p>
+        <FolderField label="Default folder for clips" value={clips} onChange={setClips}
+          placeholder="e.g. C:\Coaching\Cutups" hint="Where \u201cCut clips\u201d saves by default. Leave blank to type it each time." />
+        <FolderField label="Default folder for reels" value={reels} onChange={setReels}
+          placeholder="(inside your library: \u2026\Pigskin Cutter\reels)" hint="Where highlight reels are saved. Blank uses a \u201creels\u201d folder inside your library." />
+        <button className="btn primary" style={{ marginTop: 6 }} disabled={busy} onClick={save}>{busy ? 'Saving\u2026' : 'Save settings'}</button>
+        {!hasFolderPicker() && <div className="hint2" style={{ marginTop: 8 }}>Tip: in the desktop app a \u201cBrowse\u2026\u201d button lets you pick folders without typing.</div>}
+      </div>
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 4px' }}>Your film library</h4>
+        <p className="hint3">Your games and index live here. Films you add are copied inside this folder so everything stays together.</p>
+        <input className="inp full" value={library || ''} readOnly style={{ opacity: 0.8 }} />
+        <div className="hint2">To use a different library folder, launch the app pointed at it (a \u201cswitch library\u201d button is coming).</div>
+      </div>
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 4px' }}>Appearance</h4>
+        <p className="hint3">Pigskin Cutter uses a dark theme. A light-mode option is on the way.</p>
+      </div>
+    </div>
+  )
 }
 
 // -- HOME -------------------------------------------------------------------
@@ -422,6 +491,8 @@ function ExportPanel({ filter, count, sizes, flash, setError }) {
   const [pos, setPos] = useState('bottom-right')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
+  // pre-fill the output folder from the saved default (Settings)
+  useEffect(() => { getConfig().then((c) => { if (c.clips_dir) setOut((o) => o || c.clips_dir) }).catch(() => {}) }, [])
   const run = async (dry) => {
     setBusy(true); setResult(null); setError('')
     try {
@@ -433,7 +504,10 @@ function ExportPanel({ filter, count, sizes, flash, setError }) {
   }
   return (
     <div className="export">
-      <input className="inp full" placeholder="output folder (e.g. C:\cutups)" value={out} onChange={(e) => setOut(e.target.value)} />
+      <div className="row" style={{ gap: 8 }}>
+        <input className="inp" style={{ flex: 1 }} placeholder="output folder (e.g. C:\cutups)" value={out} onChange={(e) => setOut(e.target.value)} />
+        {hasFolderPicker() && <button className="btn" onClick={async () => { const p = await pickFolder(); if (p) setOut(p) }}>Browse…</button>}
+      </div>
       <label className="fld">Size / platform</label>
       <select className="inp full" value={size} onChange={(e) => setSize(e.target.value)}>
         {sizes.map((s) => <option key={s.key} value={s.key}>{s.label} — {s.platform}</option>)}

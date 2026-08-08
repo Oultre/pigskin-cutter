@@ -44,6 +44,12 @@ class Config:
     watermark_position: str = "bottom-right"   # bottom-right|bottom-left|top-right|top-left|center
     watermark_scale: float = 0.12              # logo width as a fraction of the video width
 
+    # Default save locations (chosen in Settings). Absolute paths; empty means
+    # "ask each time" for clips and "<library>/reels" for reels. Clips can live
+    # anywhere on disk; reels default inside the library so they travel with it.
+    clips_dir: str | None = None
+    reels_dir: str | None = None
+
     # Chart fields captured as text inputs in the tag pass (down and hash always
     # have quick-keys). Set to your coordinators' vocabulary. Stored as a list.
     tag_fields: list[str] = field(default_factory=lambda: ["distance", "off_form", "play_type"])

@@ -79,6 +79,20 @@ class DesktopApi:
             return None
         return result[0] if isinstance(result, (list, tuple)) else result
 
+    def pick_folder(self):
+        """Open a native 'choose a folder' dialog; return its path, or None.
+
+        Used by Settings and the export/reel save fields to pick where clips and
+        reels are written.
+        """
+        import webview
+
+        result = webview.windows[0].create_file_dialog(
+            webview.FOLDER_DIALOG, directory=self.library_root)
+        if not result:
+            return None
+        return result[0] if isinstance(result, (list, tuple)) else result
+
 
 def _install_drag_drop(window) -> None:
     """Deliver the real path of a dropped film to the page.
