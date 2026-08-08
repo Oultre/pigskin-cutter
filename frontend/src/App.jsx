@@ -166,7 +166,7 @@ export default function App() {
 }
 function titleFor(v) {
   return { plays: 'Clip Cutter', data: 'Data Grab', detect: 'Auto Detect',
-    library: 'Film Library', tag: 'Tag Pass', settings: 'Settings', help: 'Coach\u2019s Guide' }[v] || ''
+    library: 'Film Library', tag: 'Tag Pass', settings: 'Settings', help: 'Coach’s Guide' }[v] || ''
 }
 
 // -- SETTINGS ---------------------------------------------------------------
@@ -177,12 +177,12 @@ function FolderField({ label, value, onChange, placeholder, hint }) {
       <label className="fld">{label}</label>
       <div className="row" style={{ gap: 8 }}>
         <input className="inp" value={value || ''}
-          placeholder={native ? 'Click Browse to choose a folder\u2026' : placeholder}
+          placeholder={native ? 'Click Browse to choose a folder…' : placeholder}
           readOnly={native} onChange={native ? undefined : (e) => onChange(e.target.value)}
           onClick={native ? async () => { const p = await pickFolder(); if (p) onChange(p) } : undefined}
           style={{ flex: 1, cursor: native ? 'pointer' : 'text' }} />
-        <button className="btn primary" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }} disabled={!native}>Browse\u2026</button>
-        {value && <button className="btn ghost sm" onClick={() => onChange('')} title="Clear">\u00d7</button>}
+        <button className="btn primary" onClick={async () => { const p = await pickFolder(); if (p) onChange(p) }} disabled={!native}>Browse…</button>
+        {value && <button className="btn ghost sm" onClick={() => onChange('')} title="Clear">×</button>}
       </div>
       {hint && <div className="hint2">{hint}</div>}
     </div>
@@ -219,22 +219,22 @@ function Settings({ nav, flash, setError, theme, flipTheme }) {
   const library = cfg && (cfg.library || null)
   return (
     <div className="screen">
-      <div className="scr-bar"><span className="back" onClick={() => nav('home')}>\u2039 Home</span><h2>Settings</h2></div>
+      <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span><h2>Settings</h2></div>
       <div className="form-card">
         <h4 style={{ margin: '0 0 4px' }}>Where things are saved</h4>
         <p className="hint3">Set these once and they fill in automatically. You can still pick a different folder at export time.</p>
         <FolderField label="Default folder for clips" value={clips} onChange={setClips}
-          placeholder="e.g. C:\Coaching\Cutups" hint="Where \u201cCut clips\u201d saves by default. Leave blank to type it each time." />
+          placeholder="e.g. C:\Coaching\Cutups" hint="Where “Cut clips” saves by default. Leave blank to type it each time." />
         <FolderField label="Default folder for reels" value={reels} onChange={setReels}
-          placeholder="(inside your library: \u2026\Pigskin Cutter\reels)" hint="Where highlight reels are saved. Blank uses a \u201creels\u201d folder inside your library." />
-        <button className="btn primary" style={{ marginTop: 6 }} disabled={busy} onClick={save}>{busy ? 'Saving\u2026' : 'Save settings'}</button>
-        {!hasFolderPicker() && <div className="hint2" style={{ marginTop: 8 }}>Tip: in the desktop app a \u201cBrowse\u2026\u201d button lets you pick folders without typing.</div>}
+          placeholder="(inside your library: …\Pigskin Cutter\reels)" hint="Where highlight reels are saved. Blank uses a “reels” folder inside your library." />
+        <button className="btn primary" style={{ marginTop: 6 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save settings'}</button>
+        {!hasFolderPicker() && <div className="hint2" style={{ marginTop: 8 }}>Tip: in the desktop app a “Browse…” button lets you pick folders without typing.</div>}
       </div>
       <div className="form-card">
         <h4 style={{ margin: '0 0 4px' }}>Your film library</h4>
         <p className="hint3">Your games and index live here. Films you add are copied inside this folder so everything stays together.</p>
         <input className="inp full" value={library || ''} readOnly style={{ opacity: 0.8 }} />
-        <div className="hint2">To use a different library folder, launch the app pointed at it (a \u201cswitch library\u201d button is coming).</div>
+        <div className="hint2">To use a different library folder, launch the app pointed at it (a “switch library” button is coming).</div>
       </div>
       <div className="form-card">
         <h4 style={{ margin: '0 0 4px' }}>Appearance</h4>
@@ -837,13 +837,17 @@ function FilmLibrary({ films, onChanged, flash, nav }) {
           onDragLeave={() => setHot(false)} onDrop={onDrop} onClick={hasNative ? browse : undefined}>
           {I.up}
           <div>{hasNative ? 'Click to browse, or drag a film here' : 'Drag a film file here'}</div>
-          <div className="hint2">The film needs to live inside your library folder.</div>
+          <div className="hint2">A film from anywhere is copied into your library so everything stays together.</div>
         </div>
-        <label className="fld">File (in library folder)</label>
+        <label className="fld">Film file</label>
         <div className="row" style={{ gap: 8 }}>
-          <input className="inp" style={{ flex: 1 }} value={path} onChange={(e) => setPath(e.target.value)} placeholder="e.g. 2026/mines-vs-csc.mp4" />
+          <input className="inp" value={path}
+            placeholder={hasNative ? 'Click Browse to choose a film…' : 'e.g. 2026/mines-vs-csc.mp4'}
+            readOnly={hasNative} onChange={hasNative ? undefined : (e) => setPath(e.target.value)}
+            onClick={hasNative ? browse : undefined}
+            style={{ flex: 1, cursor: hasNative ? 'pointer' : 'text' }} />
           {hasNative
-            ? <button className="btn" onClick={browse}>Browse…</button>
+            ? <button className="btn primary" onClick={browse}>Browse…</button>
             : <select className="inp" value="" onChange={(e) => e.target.value && setPath(e.target.value)}>
                 <option value="">choose…</option>{available.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>}
