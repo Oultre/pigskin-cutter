@@ -42,38 +42,39 @@ def compare(video_down, video_dist, pbp_down, pbp_dist) -> str:
 
 
 def read_down_distance(ffmpeg, video, template, glyphs, t_start: float,
-                       pre_window: float = 3.0, step: float = 0.7, conf: float = 0.75):
-    """Best-confidence (down, distance) read in a play's pre-snap window, or (None, None).
+                       lead: float = 3.0, window: float = 5.0, fps: float = 2.5,
+                       conf: float = 0.7):
+    """Consensus (down, distance) read around a play's placement, or (None, None).
 
-    The score bug shows *this* play's down & distance before the snap, so we
-    sample a few frames from the placement forward and keep the clearest read
-    (both fields confident). Returns the strings, or (None, None) if the bar was
-    never cleanly readable.
+    Streams a window around the placement (``[t_start-lead, t_start-lead+window]``
+    — mostly pre-snap, where the bug shows *this* play's down & distance) in a
+    single ffmpeg call, reads every frame, and takes the **majority** of the
+    confident reads. Voting shrugs off the odd fluky misread and catches the clean
+    frames wherever they fall in the window, so far fewer plays come back unread —
+    while a wrong placement still reads the wrong value and is flagged.
     """
+    from collections import Counter
+
     from .ocr.read import read_region
-    from .ocr.scan import _crop_region, extract_frame
+    from .ocr.scan import _crop_region, read_window
 
     dn = template.region("down_num")
     di = template.region("dist_num")
     if dn is None or di is None:
         return None, None
-    best = None
-    t = t_start
-    while t <= t_start + pre_window + 1e-6:
+    votes: Counter = Counter()
+    for frame in read_window(ffmpeg, video, t_start - lead, window, fps):
         try:
-            frame = extract_frame(ffmpeg, video, t)
             vd, cd = read_region(_crop_region(frame, dn), glyphs, whitelist=dn.whitelist, polarity=dn.polarity)
             vi, ci = read_region(_crop_region(frame, di), glyphs, whitelist=di.whitelist, polarity=di.polarity)
             if vd and vi and cd >= conf and ci >= conf:
-                score = cd + ci
-                if best is None or score > best[0]:
-                    best = (score, vd, vi)
+                votes[(vd, vi)] += 1
         except Exception:
             pass
-        t += step
-    if best is None:
+    if not votes:
         return None, None
-    return best[1], best[2]
+    (vd, vi), _ = votes.most_common(1)[0]
+    return vd, vi
 
 
 def verify_play(ffmpeg, video, template, glyphs, play_no: int, t_start: float,

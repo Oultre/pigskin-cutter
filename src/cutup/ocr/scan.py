@@ -134,6 +134,28 @@ def extract_frame(ffmpeg: str, video: Path, t: float) -> np.ndarray:
     return img
 
 
+def read_window(ffmpeg: str, video: Path, t: float, dur: float, fps: float) -> list[np.ndarray]:
+    """Frames over ``[t, t+dur]`` at ``fps`` as BGR images, from one ffmpeg call.
+
+    Streaming a short window in a single call amortizes the seek/decode, so it's
+    far cheaper than one ``extract_frame`` per moment — which lets callers sample
+    a window densely (e.g. verification) without paying per-frame process spawns.
+    """
+    proc = subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", f"{max(t, 0.0):.3f}",
+         "-i", str(video), "-t", f"{dur:.3f}", "-vf", f"fps={fps}",
+         "-f", "image2pipe", "-vcodec", "png", "pipe:1"],
+        capture_output=True, check=False,
+    )
+    sig = b"\x89PNG\r\n\x1a\n"                     # split the concatenated PNG stream
+    frames: list[np.ndarray] = []
+    for part in proc.stdout.split(sig)[1:]:
+        img = cv2.imdecode(np.frombuffer(sig + part, np.uint8), cv2.IMREAD_COLOR)
+        if img is not None:
+            frames.append(img)
+    return frames
+
+
 def _crop_region(frame: np.ndarray, region: Region) -> np.ndarray:
     h, w = frame.shape[:2]
     x0, y0 = int(region.x * w), int(region.y * h)
