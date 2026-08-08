@@ -284,7 +284,6 @@ function Home({ nav }) {
       </div>
       <div className="home-foot">
         <a onClick={() => nav('tag')}>Tag a game by hand</a>
-        <a href="https://youtube.com/playlist?list=PLI8T919f3wbOZMaz66tV3GMfzSofeHYqZ" target="_blank" rel="noreferrer">Tutorial videos</a>
         <a onClick={() => nav('help')}>Coach&rsquo;s guide</a>
       </div>
     </div>
