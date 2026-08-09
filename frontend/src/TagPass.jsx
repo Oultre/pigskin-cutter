@@ -15,6 +15,15 @@ const FIELD_KEYS = ['down', 'distance', 'hash', 'off_form', 'play_type']
 // Xbox / standard-mapping button indices
 const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, BACK: 8, START: 9, DUP: 12, DDOWN: 13, DLEFT: 14, DRIGHT: 15 }
 
+// The physical buttons are the same indices in the browser's "standard" mapping;
+// only the face labels differ. Show PlayStation glyphs for a DualSense/DualShock
+// (id reports "DualSense", Sony vendor 054c), Xbox letters for everything else.
+const PAD_LABELS = {
+  ps:   { A: '✕', B: '○', X: '▢', Y: '△', LB: 'L1', RB: 'R1', START: 'Options', BACK: 'Create', name: 'PlayStation' },
+  xbox: { A: 'A', B: 'B', X: 'X', Y: 'Y', LB: 'LB', RB: 'RB', START: 'Start',   BACK: 'Back',   name: 'Xbox' },
+}
+const padKind = (id) => (id && /dualsense|dualshock|playstation|sony|054c|0ce6|09cc/i.test(id)) ? 'ps' : 'xbox'
+
 export default function TagPass({ films, onTagged }) {
   const [filmId, setFilmId] = useState(films[0]?.id ? String(films[0].id) : '')
   const [markIn, setMarkIn] = useState(null)
@@ -191,12 +200,34 @@ export default function TagPass({ films, onTagged }) {
           <button onClick={clearMarks}>Clear (Esc)</button>
         </div>
 
+        {pad && (() => {
+          const L = PAD_LABELS[padKind(pad)]
+          const rows = [
+            [L.A, 'Mark start'], [L.B, 'Mark end'],
+            [L.X, 'Save + next'], [L.Y, 'Clear marks'],
+            [`${L.LB} / ${L.RB}`, 'Seek 1s'], ['D-pad ← →', 'Seek 5s'],
+            ['D-pad ↑ ↓', 'Set down'], [L.START, 'Play / pause'], [L.BACK, 'Undo'],
+          ]
+          return (
+            <div className="pad-legend">
+              <div className="pad-legend-head">🎮 {L.name} controller</div>
+              <div className="pad-legend-grid">
+                {rows.map(([btn, act]) => (
+                  <div className="pad-legend-row" key={act}>
+                    <span className="pad-btn">{btn}</span>
+                    <span className="pad-act">{act}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
+
         <details className="legend">
-          <summary>Shortcuts</summary>
+          <summary>Keyboard shortcuts</summary>
           <div>Space play/pause · ←/→ seek 1s (Shift 5s) · ,/. frame</div>
           <div>I mark in · O mark out · 1–4 down · L/M/R hash</div>
           <div>Enter save+next · Z undo · Esc clear</div>
-          <div>Pad: A in · B out · X save · Y clear · LB/RB seek · D-pad ↑↓ down · Start play</div>
         </details>
       </div>
     </div>
