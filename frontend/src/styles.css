@@ -298,6 +298,7 @@ label.fld { display: block; font-size: 11px; color: var(--dim); margin: 10px 0 5
 .pad-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .pad-legend-row .pad-btn { flex: none; min-width: 30px; text-align: center; padding: 2px 7px; border: 1px solid var(--line2); border-radius: 6px; background: var(--panel); color: var(--fg); font-weight: 600; }
 .pad-legend-row .pad-act { color: var(--dim); }
+.pad-hint { font-size: 12px; color: var(--dim); margin-top: 8px; }
 
 /* ===== coach help (kept, re-themed) ===== */
 .help { overflow-y: auto; padding: 28px 32px; max-width: 780px; line-height: 1.6; margin: 0 auto; }

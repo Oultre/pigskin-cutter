@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { streamUrl, createPlay, deletePlay, getConfig } from './api.js'
+import { PAD_LABELS, padKind, useGamepad } from './gamepad.js'
 
 function fmt(t) {
   if (t === null || t === undefined) return '—'
@@ -12,18 +13,6 @@ function fmt(t) {
 // Fields captured per play. down/hash have quick-keys; the rest are typed.
 const FIELD_KEYS = ['down', 'distance', 'hash', 'off_form', 'play_type']
 
-// Xbox / standard-mapping button indices
-const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, BACK: 8, START: 9, DUP: 12, DDOWN: 13, DLEFT: 14, DRIGHT: 15 }
-
-// The physical buttons are the same indices in the browser's "standard" mapping;
-// only the face labels differ. Show PlayStation glyphs for a DualSense/DualShock
-// (id reports "DualSense", Sony vendor 054c), Xbox letters for everything else.
-const PAD_LABELS = {
-  ps:   { A: '✕', B: '○', X: '▢', Y: '△', LB: 'L1', RB: 'R1', START: 'Options', BACK: 'Create', name: 'PlayStation' },
-  xbox: { A: 'A', B: 'B', X: 'X', Y: 'Y', LB: 'LB', RB: 'RB', START: 'Start',   BACK: 'Back',   name: 'Xbox' },
-}
-const padKind = (id) => (id && /dualsense|dualshock|playstation|sony|054c|0ce6|09cc/i.test(id)) ? 'ps' : 'xbox'
-
 export default function TagPass({ films, onTagged }) {
   const [filmId, setFilmId] = useState(films[0]?.id ? String(films[0].id) : '')
   const [markIn, setMarkIn] = useState(null)
@@ -31,7 +20,6 @@ export default function TagPass({ films, onTagged }) {
   const [fields, setFields] = useState({})
   const [count, setCount] = useState(0)
   const [msg, setMsg] = useState('Pick a film and start marking plays.')
-  const [pad, setPad] = useState(null)
   const [tagFields, setTagFields] = useState(['distance', 'off_form', 'play_type'])
 
   useEffect(() => {
@@ -40,7 +28,6 @@ export default function TagPass({ films, onTagged }) {
 
   const videoRef = useRef(null)
   const lastIdRef = useRef(null)
-  const padRef = useRef(null)
   // mirror latest state so the (once-bound) keyboard/gamepad loops read fresh values
   const s = useRef({})
   s.current = { markIn, markOut, fields, filmId }
@@ -110,36 +97,14 @@ export default function TagPass({ films, onTagged }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [fps])
 
-  // gamepad polling
-  useEffect(() => {
-    let raf
-    const prev = {}
-    const poll = () => {
-      const gp = navigator.getGamepads && navigator.getGamepads()[0]
-      if (gp) {
-        if (padRef.current !== gp.id) { padRef.current = gp.id; setPad(gp.id) }
-        const edge = (i) => {
-          const p = !!(gp.buttons[i] && gp.buttons[i].pressed)
-          const was = prev[i]; prev[i] = p; return p && !was
-        }
-        if (edge(BTN.A)) doIn()
-        if (edge(BTN.B)) doOut()
-        if (edge(BTN.X)) save()
-        if (edge(BTN.Y)) clearMarks()
-        if (edge(BTN.LB)) seek(-1)
-        if (edge(BTN.RB)) seek(1)
-        if (edge(BTN.START)) togglePlay()
-        if (edge(BTN.BACK)) undo()
-        if (edge(BTN.DUP)) bumpDown(1)
-        if (edge(BTN.DDOWN)) bumpDown(-1)
-        if (edge(BTN.DLEFT)) seek(-5)
-        if (edge(BTN.DRIGHT)) seek(5)
-      } else if (padRef.current) { padRef.current = null; setPad(null) }
-      raf = requestAnimationFrame(poll)
-    }
-    raf = requestAnimationFrame(poll)
-    return () => cancelAnimationFrame(raf)
-  }, [])
+  // gamepad — same button → action mapping as before, via the shared poller
+  const pad = useGamepad({
+    A: doIn, B: doOut, X: save, Y: clearMarks,
+    LB: () => seek(-1), RB: () => seek(1),
+    START: togglePlay, BACK: undo,
+    DUP: () => bumpDown(1), DDOWN: () => bumpDown(-1),
+    DLEFT: () => seek(-5), DRIGHT: () => seek(5),
+  })
 
   const pendingDur = (markIn != null && markOut != null) ? Math.max(0, markOut - markIn) : null
 
@@ -152,7 +117,7 @@ export default function TagPass({ films, onTagged }) {
             {films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
           </select>
           <span className="tag-count">{count} tagged this pass</span>
-          <span className={'pad ' + (pad ? 'on' : '')}>{pad ? 'gamepad ✓' : 'no gamepad'}</span>
+          <span className={'pad ' + (pad ? 'on' : '')}>{pad ? `🎮 ${PAD_LABELS[padKind(pad)].name} ✓` : '🎮 press a button to connect'}</span>
         </div>
         {filmId
           ? <video key={filmId} ref={videoRef} src={streamUrl(filmId)} controls preload="metadata" />

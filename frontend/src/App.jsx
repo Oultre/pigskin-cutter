@@ -5,6 +5,7 @@ import {
   deleteFilm, importFilm, importPbp, findSchedule, startAlign, startDetect, startVerify, getJob, getJobs, getExportSizes, startReel,
   getConfig, saveConfig,
 } from './api.js'
+import { PAD_LABELS, padKind, useGamepad } from './gamepad.js'
 
 // Native folder picker (desktop app only); returns a path or null.
 const hasFolderPicker = () => typeof window !== 'undefined' && window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder
@@ -512,9 +513,28 @@ function Preview({ play, onChange }) {
       el.readyState >= 1 ? seek() : el.addEventListener('loadedmetadata', seek, { once: true })
     }
   }, [play?.id])
-  if (!play) return <div className="pv-empty">Click a play to watch and trim it.</div>
-  const nudge = async (field, d) => onChange(await patchPlay(play.id, { [field]: Math.max(0, (play[field] ?? 0) + d) }))
-  const toHead = async (field) => { if (v.current) onChange(await patchPlay(play.id, { [field]: v.current.currentTime })) }
+
+  // gamepad control for review + trim. Guards inside so it's safe with no play
+  // selected (the hook must be called unconditionally, before the early return).
+  const nudge = async (field, d) => { if (play) onChange(await patchPlay(play.id, { [field]: Math.max(0, (play[field] ?? 0) + d) })) }
+  const toHead = async (field) => { if (play && v.current) onChange(await patchPlay(play.id, { [field]: v.current.currentTime })) }
+  const seekBy = (d) => { const el = v.current; if (el) el.currentTime = Math.max(0, el.currentTime + d) }
+  const togglePlay = () => { const el = v.current; if (el) (el.paused ? el.play() : el.pause()) }
+  const pad = useGamepad({
+    START: togglePlay,
+    LB: () => seekBy(-1), RB: () => seekBy(1),
+    DLEFT: () => seekBy(-5), DRIGHT: () => seekBy(5),
+    A: () => toHead('t_start'), B: () => toHead('t_end'),
+    X: () => nudge('t_end', -0.1), Y: () => nudge('t_end', 0.1),
+  })
+
+  if (!play) return (
+    <div className="pv-empty">
+      Click a play to watch and trim it.
+      <div className="pad-hint">{pad ? `🎮 ${PAD_LABELS[padKind(pad)].name} controller connected` : '🎮 Have a controller? Press any button to enable it.'}</div>
+    </div>
+  )
+  const L = pad && PAD_LABELS[padKind(pad)]
   return (
     <div className="preview">
       <video ref={v} src={streamUrl(play.film_id)} controls preload="metadata" />
@@ -528,6 +548,19 @@ function Preview({ play, onChange }) {
             {[-0.5, -0.1, 0.1, 0.5].map((d) => <button className="btn sm" key={d} onClick={() => nudge('t_end', d)}>{d > 0 ? '+' : ''}{d}</button>)}
             <button className="btn sm" onClick={() => toHead('t_end')}>= here</button></div>
         </div>
+        {L ? (
+          <div className="pad-legend">
+            <div className="pad-legend-head">🎮 {L.name} controller</div>
+            <div className="pad-legend-grid">
+              {[[L.START, 'Play / pause'], [`${L.LB} / ${L.RB}`, 'Seek 1s'], ['D-pad ← →', 'Seek 5s'],
+                [L.A, 'Set start here'], [L.B, 'Set end here'], [`${L.X} / ${L.Y}`, 'Trim end ∓0.1']].map(([btn, act]) => (
+                <div className="pad-legend-row" key={act}><span className="pad-btn">{btn}</span><span className="pad-act">{act}</span></div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="pad-hint">🎮 Have a controller? Press any button to enable gamepad trimming.</div>
+        )}
         <div className="tags">{Object.entries(play.tags).slice(0, 12).map(([k, val]) => <span className="tag" key={k}>{k} <b>{val}</b></span>)}</div>
       </div>
     </div>
