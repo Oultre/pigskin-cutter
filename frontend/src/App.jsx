@@ -263,7 +263,7 @@ function Home({ nav }) {
   const cards = [
     ['plays', 'MANUAL', I.scissors, 'Clip Cutter', 'Find the plays you want, watch and trim them, and export clean clips — in any social size.'],
     ['detect', 'AUTO-DETECT', I.scan, 'Auto Detect', 'Find every play automatically — from the broadcast game clock or scene cuts on All-22 film.'],
-    ['data', 'DATA', I.data, 'Data Grab', 'Pull official NFL & college play-by-play and line it up with your film.'],
+    ['data', 'DATA', I.data, 'Data Grab', 'Pull official college play-by-play and line it up with your film.'],
     ['plays', 'REEL', I.reel, 'Build Reel', 'Stitch chosen plays into one highlight reel with labels — vertical for Reels/TikTok.'],
     ['library', 'LIBRARY', I.film, 'Film Library', 'Add a game — browse or drag & drop — and manage your film.'],
   ]

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pigskin-cutter"
-version = "0.2.1"
+version = "0.2.2"
 description = "Pigskin Cutter: local-only football film cut-up tool: index film, filter plays, export clips."
 readme = "README.md"
 requires-python = ">=3.11"

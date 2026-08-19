@@ -23,7 +23,7 @@ export default function Help() {
         <ul>
           <li><b>Clip Cutter</b> — find plays and make clips. This is where you&rsquo;ll spend most of your time.</li>
           <li><b>Auto Detect</b> — let the app find the plays for you on a broadcast game.</li>
-          <li><b>Data Grab</b> — pull the official play-by-play for a college or NFL game.</li>
+          <li><b>Data Grab</b> — pull the official play-by-play for a college game.</li>
           <li><b>Build Reel</b> — string a bunch of plays into one highlight video.</li>
           <li><b>Film Library</b> — add a game and see what&rsquo;s loaded.</li>
         </ul>
@@ -72,11 +72,21 @@ export default function Help() {
 
       <section>
         <h2>Auto Detect — let the app find the plays</h2>
-        <p>For a <b>TV broadcast</b> game, Auto Detect reads the on-screen game clock and lines the
-          play-by-play up with the video for you — no tagging. It needs the play-by-play imported
-          first (see Data Grab) and a visible clock in the picture. It takes a few minutes.</p>
-        <p className="tip">All-22 and end-zone film is handled a different way (splitting at the camera
-          cuts between plays). That mode is on the way.</p>
+        <p>Auto Detect has three boxes, and which one you use depends on your film.</p>
+        <ol>
+          <li><b>Broadcast — read the game clock.</b> For a <b>TV broadcast</b> game, this reads the
+            on-screen game clock and lines your play-by-play up with the video — no tagging. It needs the
+            play-by-play imported first (see Data Grab) and a visible clock in the picture. Takes several
+            minutes.</li>
+          <li><b>All-22 &amp; coaches film — detect scene cuts.</b> On All-22 and end-zone film every play is
+            its own camera cut, so no game clock is needed — this splits the film at those cuts into plays.
+            If it misses cuts, set <b>sensitivity</b> to high; if it finds too many, set it to low.</li>
+          <li><b>Check the alignment against the video.</b> Auto-align only places plays <i>approximately</i>.
+            This reads each placed play&rsquo;s down &amp; distance back off the video and compares it to the
+            play-by-play, marking every play <b>Verified</b>, <b>Review</b>, or <b>Unchecked</b>.</li>
+        </ol>
+        <p className="tip">Run the check after an auto-align, then use <b>✓ Verified only</b> in Clip Cutter —
+          cut those with confidence and eyeball the rest.</p>
       </section>
 
       <section>
@@ -102,8 +112,8 @@ export default function Help() {
       <section>
         <h2>Tagging a game yourself (Tag a game by hand)</h2>
         <p>No breakdown or play-by-play for a game? Watch it once and mark the plays. From the home
-          screen click <b>Tag a game by hand</b>, pick the film, and use these while it plays — a
-          keyboard <i>or</i> an Xbox-style controller.</p>
+          screen click <b>Tag a game by hand</b>, pick the film, and use these while it plays. Prefer a
+          game controller? See <b>Using a game controller</b> below.</p>
         <div className="keys">
           <div><Kbd>Space</Kbd> play / pause</div>
           <div><Kbd>&larr;</Kbd> <Kbd>&rarr;</Kbd> jump back / forward 1 second (hold <Kbd>Shift</Kbd> for 5)</div>
@@ -112,8 +122,45 @@ export default function Help() {
           <div><Kbd>1</Kbd>&ndash;<Kbd>4</Kbd> set the down &nbsp; <Kbd>L</Kbd> <Kbd>M</Kbd> <Kbd>R</Kbd> set the hash</div>
           <div><Kbd>Enter</Kbd> save and move on &nbsp; <Kbd>Z</Kbd> undo &nbsp; <Kbd>Esc</Kbd> clear</div>
         </div>
-        <p>Controller: <b>A</b> mark start, <b>B</b> mark end, <b>X</b> save, <b>Y</b> clear, the bumpers
-          scrub, the D-pad sets the down, <b>Start</b> plays/pauses.</p>
+      </section>
+
+      <section>
+        <h2>Using a game controller</h2>
+        <p>An <b>Xbox</b> or <b>PlayStation 5</b> controller works in two places — <b>Tag a game by hand</b>
+          and the <b>watch and trim</b> panel in Clip Cutter. Plug it in (USB or Bluetooth) and
+          <b> press any button</b> — the app can&rsquo;t see a controller until you do, which is why it says
+          &ldquo;press a button to connect&rdquo; until then. Once it wakes up, a <b>button guide appears on screen</b>
+          with the right labels for your controller — ✕ ○ ▢ △ for a PlayStation pad, A B X Y for an Xbox one.
+          No controller connected, no guide.</p>
+        <p>In <b>Tag a game by hand</b> (Xbox labels; PlayStation in parentheses):</p>
+        <div className="keys">
+          <div><Kbd>A</Kbd> (<Kbd>✕</Kbd>) mark start &nbsp; <Kbd>B</Kbd> (<Kbd>○</Kbd>) mark end</div>
+          <div><Kbd>X</Kbd> (<Kbd>▢</Kbd>) save and move on &nbsp; <Kbd>Y</Kbd> (<Kbd>△</Kbd>) clear</div>
+          <div><Kbd>LB</Kbd> <Kbd>RB</Kbd> (<Kbd>L1</Kbd> <Kbd>R1</Kbd>) jump 1 second</div>
+          <div>D-pad <Kbd>&larr;</Kbd> <Kbd>&rarr;</Kbd> jump 5 seconds &nbsp; D-pad <Kbd>&uarr;</Kbd> <Kbd>&darr;</Kbd> set the down</div>
+          <div><Kbd>Start</Kbd> (<Kbd>Options</Kbd>) play / pause &nbsp; <Kbd>Back</Kbd> (<Kbd>Create</Kbd>) undo</div>
+        </div>
+        <p>In the <b>Clip Cutter</b> preview, for scrubbing and trimming:</p>
+        <div className="keys">
+          <div><Kbd>Start</Kbd> (<Kbd>Options</Kbd>) play / pause</div>
+          <div><Kbd>LB</Kbd> <Kbd>RB</Kbd> (<Kbd>L1</Kbd> <Kbd>R1</Kbd>) jump 1 second &nbsp; D-pad <Kbd>&larr;</Kbd> <Kbd>&rarr;</Kbd> jump 5 seconds</div>
+          <div><Kbd>A</Kbd> (<Kbd>✕</Kbd>) set start here &nbsp; <Kbd>B</Kbd> (<Kbd>○</Kbd>) set end here</div>
+          <div><Kbd>X</Kbd> / <Kbd>Y</Kbd> (<Kbd>▢</Kbd> / <Kbd>△</Kbd>) trim the tail by a tenth of a second</div>
+        </div>
+        <p className="tip">Each screen wakes the controller separately — if you switch screens and the guide
+          is missing, just press a button again.</p>
+      </section>
+
+      <section>
+        <h2>Settings</h2>
+        <p>The gear up top, next to the light/dark switch.</p>
+        <ul>
+          <li><b>Where things are saved</b> — set a default folder for clips and for reels once, and they
+            fill in every time. You can still pick something else at export.</li>
+          <li><b>Your film library</b> — the folder holding your games and index. <b>Switch…</b> opens a
+            different library, or point it at an empty folder to start a fresh one.</li>
+          <li><b>Appearance</b> — the app starts dark; flip it to light here and it remembers.</li>
+        </ul>
       </section>
 
       <section>
