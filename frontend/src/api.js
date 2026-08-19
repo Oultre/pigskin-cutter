@@ -48,6 +48,21 @@ export const importPbp = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(j)
+export const findNflGames = (season, team) =>
+  fetch('/api/pbp/nfl/games?season=' + season +
+        (team ? '&team=' + encodeURIComponent(team) : '')).then(j)
+export const importNflPbp = (body) =>
+  fetch('/api/pbp/nfl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
+export const matchPlays = (body) =>
+  fetch('/api/match-plays', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(j)
 export const startAlign = (body) =>
   fetch('/api/align', {
     method: 'POST',

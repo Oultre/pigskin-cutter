@@ -128,3 +128,33 @@ def test_refine_placements_no_playclock_is_a_noop():
     assert placements[0].video_sec == pytest.approx(40.0) and placements[0].method == "drive_map"
     refine_placements(placements, [])
     assert placements[0].video_sec == pytest.approx(40.0)
+
+
+# -- per-play clocks (the NFL feed) ----------------------------------------
+
+
+def test_play_clock_anchors_each_play_directly():
+    """A source with a clock on every play beats interpolating across the drive."""
+    # Drive 1's three plays really happen at 15:00, 14:00 and 13:00 -> video 0, 60, 120.
+    plays = [
+        AlignPlay(1, 1, 1, "15:00", play_clock="15:00"),
+        AlignPlay(2, 1, 1, "15:00", play_clock="14:00"),
+        AlignPlay(3, 1, 1, "15:00", play_clock="13:00"),
+    ]
+    by = {p.play_no: p for p in estimate_snaps(_map(), plays, snap_gap=30.0)}
+    assert [by[n].video_sec for n in (1, 2, 3)] == [0.0, 60.0, 120.0]
+    assert {by[n].method for n in (1, 2, 3)} == {"clock_exact"}
+
+
+def test_drive_interpolation_still_used_without_play_clocks():
+    """College PBP has no per-play clock — that path must be untouched."""
+    by = {p.play_no: p for p in estimate_snaps(_map(), _plays(), snap_gap=30.0)}
+    assert {by[n].method for n in (1, 2, 3)} == {"drive_map"}
+
+
+def test_play_outside_the_clock_map_keeps_its_estimate():
+    plays = [AlignPlay(1, 1, 1, "15:00", play_clock="15:00"),
+             AlignPlay(2, 1, 1, "15:00", play_clock="1:00")]   # far outside the map
+    by = {p.play_no: p for p in estimate_snaps(_map(), plays, snap_gap=30.0)}
+    assert by[1].method == "clock_exact"
+    assert by[2].video_sec is not None      # fell back rather than being dropped

@@ -34,7 +34,11 @@ from .ocr.clockmap import ClockMap
 from .ocr.templates import RegionTemplate
 from .config import Config
 from .errors import CutupError
-from .ingest import hudl_clips as clips_mod, hudl_csv as hudl_mod, pbp as pbp_mod, probe as probe_mod
+from . import segmatch as segmatch_mod
+from .ingest import (
+    hudl_clips as clips_mod, hudl_csv as hudl_mod, pbp as pbp_mod,
+    pbp_nfl as pbp_nfl_mod, probe as probe_mod,
+)
 from .ingest.profiles import ImportProfile, suggest_profile
 from .library import Library
 from .models import PLAY_SOURCES, SOURCE_TYPES
@@ -1433,37 +1437,181 @@ def pbp_import(
         html = pbp_mod.fetch(source, lib.root / "cache", refetch=refetch)
         parsed = pbp_mod.parse(html)
 
-        console.print(f"[bold]{parsed.count}[/bold] plays parsed"
-                      f"  teams: {', '.join(parsed.teams) or '?'}")
-        from collections import Counter
-        split = Counter(p["tags"].get("possession") for p in parsed.plays)
-        for team, n in split.items():
-            console.print(f"  {team}: {n} plays")
-        for w in parsed.warnings:
-            console.print(f"  [yellow]note:[/yellow] {w}")
-
+        _report_pbp(parsed, dry_run)
         if dry_run:
-            table = Table(show_header=True, header_style="bold")
-            for c in ("no", "qtr", "poss", "dn", "dist", "spot", "type", "result", "gain"):
-                table.add_column(c)
-            for p in parsed.plays[:20]:
-                t = p["tags"]
-                table.add_row(
-                    str(p["play_no"]), t.get("quarter", "-"),
-                    (t.get("possession", "-") or "-")[:14],
-                    t.get("down", "-"), t.get("distance", "-"),
-                    f"{t.get('yard_side', '')}{t.get('yard_line', '')}",
-                    t.get("play_type", "-"), t.get("result", "-"), t.get("gain", "-"),
-                )
-            console.print(table)
-            if parsed.count > 20:
-                console.print(f"  ... and {parsed.count - 20} more")
-            console.print(f"[yellow]dry-run:[/yellow] {parsed.count} plays parsed, nothing written.")
             return
 
         pbp_mod.to_plays(lib.conn, film, parsed, confidence)
         lib.conn.commit()
         console.print(f"[green]imported[/green] {parsed.count} pbp plays into film {film}")
+    finally:
+        lib.close()
+
+
+def _report_pbp(parsed, dry_run: bool) -> None:
+    """Print the parse summary, and on a dry run a preview of the first plays."""
+    console.print(f"[bold]{parsed.count}[/bold] plays parsed"
+                  f"  teams: {', '.join(parsed.teams) or '?'}")
+    from collections import Counter
+    split = Counter(p["tags"].get("possession") for p in parsed.plays)
+    for team, n in split.items():
+        console.print(f"  {team}: {n} plays")
+    for w in parsed.warnings:
+        console.print(f"  [yellow]note:[/yellow] {w}")
+    if not dry_run:
+        return
+
+    has_clock = any(p.get("clock") for p in parsed.plays)
+    cols = ["no", "qtr"] + (["clock"] if has_clock else []) + [
+        "poss", "dn", "dist", "spot", "type", "result", "gain"]
+    table = Table(show_header=True, header_style="bold")
+    for c in cols:
+        table.add_column(c)
+    for p in parsed.plays[:20]:
+        t = p["tags"]
+        row = [str(p["play_no"]), t.get("quarter", "-")]
+        if has_clock:
+            row.append(p.get("clock") or "-")
+        row += [
+            (t.get("possession", "-") or "-")[:14],
+            t.get("down", "-"), t.get("distance", "-"),
+            f"{t.get('yard_side', '')}{t.get('yard_line', '')}",
+            t.get("play_type", "-"), t.get("result", "-"), t.get("gain", "-"),
+        ]
+        table.add_row(*row)
+    console.print(table)
+    if parsed.count > 20:
+        console.print(f"  ... and {parsed.count - 20} more")
+    console.print(f"[yellow]dry-run:[/yellow] {parsed.count} plays parsed, nothing written.")
+
+
+@pbp_app.command("nfl-games")
+def pbp_nfl_games(
+    season: int = typer.Argument(..., help="Season year, e.g. 2024."),
+    team: Optional[str] = typer.Option(None, "--team", help="Team abbreviation, e.g. KC."),
+    refetch: bool = typer.Option(False, "--refetch", help="Ignore the cache and fetch again."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """List a season's NFL games and their ids (for `cutup pbp nfl`)."""
+    lib = Library.open(library)
+    try:
+        games = pbp_nfl_mod.find_games(season, lib.root / "cache", team=team, refetch=refetch)
+        if not games:
+            console.print(f"[yellow]No {season} games found"
+                          f"{' for ' + team.upper() if team else ''}.[/yellow]")
+            return
+        table = Table(show_header=True, header_style="bold")
+        for c in ("game id", "wk", "date", "matchup"):
+            table.add_column(c)
+        for g in games:
+            table.add_row(g["game_id"], str(g["week"] or "-"), g["date"], g["opponent"])
+        console.print(table)
+        console.print(f"[bold]{len(games)}[/bold] games")
+    finally:
+        lib.close()
+
+
+@pbp_app.command("nfl")
+def pbp_nfl_import(
+    game_id: str = typer.Argument(..., help="Game id from `cutup pbp nfl-games`, e.g. 2024_01_BAL_KC."),
+    film: int = typer.Option(..., "--film", help="Film id to attach the plays to."),
+    season: Optional[int] = typer.Option(None, "--season", help="Season (default: read from the game id)."),
+    refetch: bool = typer.Option(False, "--refetch", help="Ignore the cache and fetch again."),
+    confidence: float = typer.Option(1.0, "--confidence"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Parse and preview; write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Import an NFL game's official play-by-play from the nflverse data set.
+
+    Unlike the college feed, every NFL play carries its own game clock, so
+    alignment anchors each play directly instead of interpolating across a drive.
+    The season file (~18 MB) downloads once and is cached; later games in that
+    season import offline.
+    """
+    if season is None:
+        head = game_id.split("_", 1)[0]
+        if not head.isdigit():
+            raise CutupError(
+                f"Can't read a season from {game_id!r}. Pass --season, or use an id "
+                "from `cutup pbp nfl-games` (e.g. 2024_01_BAL_KC).")
+        season = int(head)
+
+    lib = Library.open(library)
+    try:
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (film,)).fetchone():
+            raise CutupError(f"No film with id {film}. See `cutup film ls`.")
+
+        cache = lib.root / "cache"
+        if not pbp_nfl_mod.season_is_cached(season, cache) and not dry_run:
+            console.print(f"Downloading the {season} play-by-play (~18 MB, one time)…")
+        parsed = pbp_nfl_mod.parse_game(season, game_id, cache, refetch=refetch)
+
+        _report_pbp(parsed, dry_run)
+        if dry_run:
+            return
+
+        pbp_mod.to_plays(lib.conn, film, parsed, confidence)
+        lib.conn.commit()
+        console.print(f"[green]imported[/green] {parsed.count} pbp plays into film {film}")
+    finally:
+        lib.close()
+
+
+@app.command("match-plays")
+def match_plays(
+    film: int = typer.Option(..., "--film", help="Film with both detected segments and pbp plays."),
+    offset: int = typer.Option(0, "--offset", help="Drop N segments from the front (negative: drop N plays)."),
+    skip_special: bool = typer.Option(
+        False, "--skip-special", help="Ignore kickoffs/punts/FGs/PATs, which coaches film usually omits."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the pairing; write nothing."),
+    library: Optional[Path] = LibraryOpt,
+):
+    """Give scene-detected segments their play data, in order.
+
+    Scene detect finds *where* each play is on All-22 film; the play-by-play knows
+    *what* each play was. Both are in game order, so the Nth segment is the Nth
+    play. Run `cutup detect` and `cutup pbp ...` first, then this.
+    """
+    lib = Library.open(library)
+    try:
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (film,)).fetchone():
+            raise CutupError(f"No film with id {film}. See `cutup film ls`.")
+        segs, plays = segmatch_mod.load_sides(lib.conn, film)
+        if not segs:
+            raise CutupError(
+                f"No detected segments on film {film}. Run `cutup detect --film {film}` first.")
+        if not plays:
+            raise CutupError(
+                f"No play-by-play on film {film}. Import it first "
+                f"(`cutup pbp import ...` or `cutup pbp nfl ...`).")
+
+        m = segmatch_mod.match_in_order(segs, plays, offset=offset, skip_special=skip_special)
+        console.print(f"{len(segs)} detected segment(s), {len(plays)} play(s) from the play-by-play")
+        console.print(f"[bold]{m.summary}[/bold]")
+        if not m.clean:
+            console.print(
+                "  [yellow]note:[/yellow] the counts differ, so everything after the first "
+                "missing play is shifted. Check the first few in the grid; if they're off by a "
+                "constant, re-run with --offset.")
+
+        if dry_run:
+            table = Table(show_header=True, header_style="bold")
+            for c in ("seg start", "seg end", "play", "dn", "dist", "type", "result"):
+                table.add_column(c)
+            for seg, p in m.matched[:20]:
+                t = p["tags"]
+                table.add_row(f"{seg['t_start']:.1f}", f"{seg['t_end']:.1f}", str(p["play_no"]),
+                              t.get("down", "-"), t.get("distance", "-"),
+                              t.get("play_type", "-"), t.get("result", "-"))
+            console.print(table)
+            if len(m.matched) > 20:
+                console.print(f"  ... and {len(m.matched) - 20} more")
+            console.print("[yellow]dry-run:[/yellow] nothing written.")
+            return
+
+        n = segmatch_mod.apply_match(lib.conn, m)
+        lib.conn.commit()
+        console.print(f"[green]matched[/green] {n} plays — they now have cut times and play data.")
     finally:
         lib.close()
 
@@ -1630,6 +1778,7 @@ def align(
                 quarter=int(tags["quarter"]) if tags.get("quarter") else None,
                 drive=int(tags["drive"]) if tags.get("drive") else None,
                 drive_clock=tags.get("drive_clock"),
+                play_clock=tags.get("clock"),
             ))
 
         placements = align_mod.estimate_snaps(cm, plays, snap_gap=snap_gap)

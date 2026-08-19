@@ -26,7 +26,7 @@ always brings you back home.
 
 - **Clip Cutter** — find plays and make clips. This is where you'll spend most of your time.
 - **Auto Detect** — let the app find the plays for you.
-- **Data Grab** — pull the official play-by-play for a college game.
+- **Data Grab** — pull the official play-by-play for an NFL or college game.
 - **Build Reel** — string a bunch of plays into one highlight video.
 - **Film Library** — add a game and see what's loaded.
 
@@ -99,7 +99,7 @@ burned onto each one. It saves into a **reels** folder inside your library.
 
 ## 5. Auto Detect — let the app find the plays
 
-Three boxes; which one you use depends on your film.
+Four boxes; which you use depends on your film.
 
 **Broadcast — read the game clock.** For a TV-broadcast game, this reads the on-screen
 game clock and lines your imported play-by-play up with the video, so you don't tag
@@ -111,6 +111,21 @@ is its own camera cut, so no game clock is needed — this splits the film at th
 into individual plays. If it misses cuts, set **sensitivity** to high; if it finds too
 many, set it to low.
 
+**All-22 — give the detected plays their play data.** Scene detect finds *where* each
+play is, but not *what* it was. If you've imported that game's play-by-play (see Data
+Grab), this pairs the two in game order — 1st cut to 1st play — so your All-22 cuts get
+real down, distance and result.
+
+Click **Preview** first. It tells you whether the two sides actually line up, and shows
+the first dozen pairings so you can eyeball them. Two knobs for when they don't:
+
+- **no kicks/punts** — coaches copies usually don't include kickoffs, punts, field goals
+  or PATs, but the official play list does. Tick this to leave them out.
+- **skip first** — if the film opens on a title card or warm-ups that the detector counted
+  as a play, everything shifts by one. Raise this until the preview lines up.
+
+If the counts differ, the app says so rather than quietly matching the wrong plays.
+
 **Check the alignment against the video.** Auto-align places plays *approximately*.
 This reads each placed play's down & distance back off the video and compares it to the
 play-by-play, marking every play **Verified**, **Review**, or **Unchecked**. Run it
@@ -119,13 +134,23 @@ confidence and eyeball the rest.
 
 ## 6. Data Grab — official play-by-play
 
-Pulls the official play list for a game so you don't have to chart it. Type a college's
-athletics website (like *minesathletics.com*) and the season, click **Find games**, and
-pick your game from the list — it fills in every play's down, distance, and result.
+Pulls the official play list for a game so you don't have to chart it. Pick **College** or
+**NFL** at the top, find your game, and it fills in every play's down, distance, and result.
 
-This works for most **college** teams, because their athletics sites all run on the same
-platform (Sidearm). It does **not** work for high-school or pro games. If your school
-isn't found, you can still paste a box-score link directly.
+**College.** Type the school's athletics website (like *minesathletics.com*) and the
+season, click **Find games**, and pick your game. Works for most college programs, because
+their athletics sites all run on the same platform (Sidearm). It does **not** work for
+high-school sites — if your school isn't found, you can still paste a box-score link
+directly.
+
+**NFL.** Type a team abbreviation (*KC*, *PHI*, *SF*) and the season, then pick the game.
+Every NFL game back to 1999 is available, from the public nflverse data set. The first
+game you import from a season downloads that season (about 18 MB, a minute or two) — after
+that every other game in that season is instant and works with no internet.
+
+NFL play-by-play carries a game clock on **every play**, where the college feed only marks
+the start of each drive. So on NFL broadcast film, Auto Detect places plays noticeably
+more precisely.
 
 The plays come in without cut times — run **Auto Detect** to line them up on the video.
 

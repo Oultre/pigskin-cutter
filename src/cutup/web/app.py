@@ -125,6 +125,20 @@ class PBPImport(BaseModel):
     dry_run: bool = True
 
 
+class NFLPBPImport(BaseModel):
+    film_id: int
+    game_id: str                # e.g. 2024_01_BAL_KC
+    season: Optional[int] = None
+    refetch: bool = False
+
+
+class MatchPlaysRequest(BaseModel):
+    film_id: int
+    offset: int = 0
+    skip_special: bool = False
+    dry_run: bool = True
+
+
 class PlayCreate(BaseModel):
     film_id: int
     t_start: float
@@ -242,7 +256,8 @@ def _align_job(root: Path, job_id: str, jobs: dict, film_id: int,
                 play_no=r["play_no"],
                 quarter=int(t["quarter"]) if t.get("quarter") else None,
                 drive=int(t["drive"]) if t.get("drive") else None,
-                drive_clock=t.get("drive_clock")))
+                drive_clock=t.get("drive_clock"),
+                play_clock=t.get("clock")))
 
         placements = align_mod.estimate_snaps(cm, plays)
         align_mod.refine_placements(placements, playclock)
@@ -305,6 +320,52 @@ def _detect_job(root: Path, job_id: str, jobs: dict, req: "DetectRequest") -> No
         lib.conn.commit()
         job.update(status="done", phase="done", placed=len(segments),
                    message=f"Found {len(segments)} plays from scene cuts.")
+    except Exception as exc:
+        job.update(status="failed", phase="done", message=str(exc))
+    finally:
+        job["finished"] = datetime.now().isoformat(timespec="seconds")
+        if lib is not None:
+            lib.close()
+
+
+def _nfl_pbp_job(root: Path, job_id: str, jobs: dict, req: "NFLPBPImport") -> None:
+    """Import an NFL game's play-by-play, downloading the season file if needed.
+
+    A job rather than a plain request because the first game of a season pulls an
+    ~18 MB file that can take a couple of minutes; every later game in that season
+    is served from the cache.
+    """
+    from ..ingest import pbp_nfl as pbp_nfl_mod
+
+    job = jobs[job_id]
+    lib = None
+    try:
+        lib = Library.open(root)
+        season = req.season
+        if season is None:
+            head = req.game_id.split("_", 1)[0]
+            if not head.isdigit():
+                raise CutupError(f"Can't read a season from {req.game_id!r}.")
+            season = int(head)
+
+        cache = lib.root / "cache"
+        if not pbp_nfl_mod.season_is_cached(season, cache):
+            job.update(phase="downloading",
+                       message=f"Downloading the {season} play-by-play (about 18 MB) — "
+                               "this happens once per season.")
+        else:
+            job.update(phase="reading", message="Reading the play-by-play…")
+
+        parsed = pbp_nfl_mod.parse_game(season, req.game_id, cache, refetch=req.refetch)
+        job.update(phase="saving", message=f"Saving {parsed.count} plays…")
+        pbp_mod.to_plays(lib.conn, req.film_id, parsed)
+        lib.conn.commit()
+
+        note = (" " + " ".join(parsed.warnings)) if parsed.warnings else ""
+        job.update(status="done", phase="done", placed=parsed.count,
+                   teams=parsed.teams,
+                   message=f"Imported {parsed.count} plays for {req.game_id}."
+                           f" Now run Auto Detect to place them on the film.{note}")
     except Exception as exc:
         job.update(status="failed", phase="done", message=str(exc))
     finally:
@@ -602,6 +663,70 @@ def create_app(library_root: Path) -> FastAPI:
         lib.conn.commit()
         return {"dry_run": False, "imported": parsed.count, "teams": parsed.teams,
                 "possession": split, "warnings": parsed.warnings}
+
+    @app.get("/api/pbp/nfl/games")
+    def pbp_nfl_games(season: int, team: Optional[str] = None,
+                      lib: Library = Depends(get_library)):
+        """List a season's NFL games. The schedule file is small and cached once."""
+        from ..ingest import pbp_nfl as pbp_nfl_mod
+        games = pbp_nfl_mod.find_games(season, lib.root / "cache", team=team)
+        if not games:
+            raise CutupError(
+                f"No {season} games found"
+                f"{' for ' + team.upper() if team else ''}. Check the season, and use the "
+                "team's abbreviation (KC, PHI, SF).")
+        return games
+
+    @app.post("/api/pbp/nfl")
+    def import_pbp_nfl(body: NFLPBPImport, lib: Library = Depends(get_library)):
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (body.film_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="No such film.")
+        jobs = app.state.jobs
+        if any(j["status"] == "running" for j in jobs.values()):
+            raise HTTPException(status_code=409, detail="A job is already running.")
+        job_id = uuid.uuid4().hex[:8]
+        jobs[job_id] = {"id": job_id, "kind": "nflpbp", "film_id": body.film_id,
+                        "status": "running", "phase": "starting", "placed": 0,
+                        "message": "Starting…",
+                        "started": datetime.now().isoformat(timespec="seconds")}
+        threading.Thread(target=_nfl_pbp_job,
+                         args=(app.state.library_root, job_id, jobs, body), daemon=True).start()
+        return jobs[job_id]
+
+    @app.post("/api/match-plays")
+    def match_plays(body: MatchPlaysRequest, lib: Library = Depends(get_library)):
+        """Give scene-detected segments their play data, in game order."""
+        from .. import segmatch as segmatch_mod
+        if not lib.conn.execute("SELECT 1 FROM films WHERE id = ?", (body.film_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="No such film.")
+        segs, plays = segmatch_mod.load_sides(lib.conn, body.film_id)
+        if not segs:
+            raise CutupError(
+                "No detected plays on this film yet — run “Detect plays” above first.")
+        if not plays:
+            raise CutupError(
+                "No play-by-play on this film yet — import it in Data Grab first.")
+
+        m = segmatch_mod.match_in_order(segs, plays, offset=body.offset,
+                                        skip_special=body.skip_special)
+        info = {"segments": len(segs), "plays": len(plays), "matched": len(m.matched),
+                "unmatched_segments": len(m.unmatched_segments),
+                "unmatched_plays": len(m.unmatched_plays),
+                "skipped_special": m.skipped_special,
+                "clean": m.clean, "summary": m.summary}
+        if body.dry_run:
+            info["dry_run"] = True
+            info["preview"] = [
+                {"t_start": s["t_start"], "t_end": s["t_end"], "play_no": p["play_no"],
+                 "down": p["tags"].get("down"), "distance": p["tags"].get("distance"),
+                 "play_type": p["tags"].get("play_type"), "result": p["tags"].get("result")}
+                for s, p in m.matched[:12]
+            ]
+            return info
+        info["dry_run"] = False
+        info["applied"] = segmatch_mod.apply_match(lib.conn, m)
+        lib.conn.commit()
+        return info
 
     @app.post("/api/align")
     def start_align(body: AlignRequest, lib: Library = Depends(get_library)):

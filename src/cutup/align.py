@@ -38,6 +38,14 @@ class AlignPlay:
     quarter: int | None
     drive: int | None
     drive_clock: str | None   # "MM:SS" at the drive start
+    play_clock: str | None = None
+    """"MM:SS" at *this* play, when the source publishes one.
+
+    The college narrative PBP only exposes a clock per drive, so plays are
+    interpolated across the drive window. The NFL feed (`ingest/pbp_nfl.py`)
+    carries a clock on every row — when it's here, the play is anchored on the
+    clock map directly instead of being guessed at.
+    """
 
 
 def estimate_snaps(clockmap: ClockMap, plays: list[AlignPlay],
@@ -86,7 +94,31 @@ def estimate_snaps(clockmap: ClockMap, plays: list[AlignPlay],
     for p in plays:
         if p.drive is None:
             placements.append(Placement(p.play_no, None, "unplaced", "no drive info"))
-    return sorted(placements, key=lambda pl: pl.play_no)
+    return _anchor_on_play_clocks(clockmap, plays, placements)
+
+
+def _anchor_on_play_clocks(clockmap: ClockMap, plays: list[AlignPlay],
+                           placements: list[Placement]) -> list[Placement]:
+    """Replace a play's estimate with its own clock reading, where one exists.
+
+    Drive interpolation assumes plays are evenly spread across a drive, which they
+    are not. A source that publishes a clock per play (the NFL feed) lets us look
+    each one up on the clock map directly — so this overrides those estimates and
+    leaves every other play exactly as the drive logic placed it. A play whose
+    clock falls outside the map keeps its interpolated estimate rather than being
+    dropped.
+    """
+    by_no = {pl.play_no: pl for pl in placements}
+    for p in plays:
+        if not p.play_clock or p.quarter is None:
+            continue
+        try:
+            video_sec = clockmap.video_time_for(p.quarter, parse_clock(p.play_clock))
+        except Exception:
+            continue
+        if video_sec is not None:
+            by_no[p.play_no] = Placement(p.play_no, video_sec, "clock_exact")
+    return sorted(by_no.values(), key=lambda pl: pl.play_no)
 
 
 def detect_snaps(playclock_series, high: int = 38, min_hold: float = 2.0,

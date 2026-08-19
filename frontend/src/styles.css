@@ -244,6 +244,9 @@ label.fld { display: block; font-size: 11px; color: var(--dim); margin: 10px 0 5
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .job { margin-top: 12px; background: var(--panel2); border: 1px solid var(--line2); border-radius: 10px; padding: 12px; font-size: 13px; }
 .job.bad { border-color: #4a2020; }
+.mini { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 12px; color: var(--dim); }
+.mini td { padding: 3px 8px 3px 0; border-top: 1px solid var(--line2); white-space: nowrap; }
+.mini td:first-child { font-variant-numeric: tabular-nums; color: var(--fg); }
 .bar-track { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 8px 0; }
 .bar-fill { height: 100%; background: linear-gradient(90deg, var(--red), var(--red-2)); transition: width .3s; }
 

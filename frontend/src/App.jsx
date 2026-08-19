@@ -3,7 +3,7 @@ import {
   getFilms, getTagKeys, getTagValues, getPlays, patchPlay, postExport, streamUrl, thumbUrl,
   getPresets, savePreset, deletePreset, getSourceTypes, getLibraryFilms, registerFilm,
   deleteFilm, importFilm, importPbp, findSchedule, startAlign, startDetect, startVerify, getJob, getJobs, getExportSizes, startReel,
-  getConfig, saveConfig,
+  getConfig, saveConfig, findNflGames, importNflPbp, matchPlays,
 } from './api.js'
 import { PAD_LABELS, padKind, useGamepad } from './gamepad.js'
 
@@ -263,7 +263,7 @@ function Home({ nav }) {
   const cards = [
     ['plays', 'MANUAL', I.scissors, 'Clip Cutter', 'Find the plays you want, watch and trim them, and export clean clips — in any social size.'],
     ['detect', 'AUTO-DETECT', I.scan, 'Auto Detect', 'Find every play automatically — from the broadcast game clock or scene cuts on All-22 film.'],
-    ['data', 'DATA', I.data, 'Data Grab', 'Pull official college play-by-play and line it up with your film.'],
+    ['data', 'DATA', I.data, 'Data Grab', 'Pull official NFL & college play-by-play and line it up with your film.'],
     ['plays', 'REEL', I.reel, 'Build Reel', 'Stitch chosen plays into one highlight reel with labels — vertical for Reels/TikTok.'],
     ['library', 'LIBRARY', I.film, 'Film Library', 'Add a game — browse or drag & drop — and manage your film.'],
   ]
@@ -673,15 +673,30 @@ function DataGrab({ films, filmId, onChanged, flash, nav }) {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   // find-a-game
+  const [league, setLeague] = useState('college')
   const [site, setSite] = useState('')
+  const [team, setTeam] = useState('')
   const [season, setSeason] = useState('2024')
   const [games, setGames] = useState(null)
   const [finding, setFinding] = useState(false)
+  const [nflGame, setNflGame] = useState('')
+  const [nflJob, setNflJob] = useState(null)
+  const poll = useRef(null)
+  useEffect(() => () => clearInterval(poll.current), [])
+
+  const isNfl = league === 'nfl'
+  const picked = isNfl ? nflGame : source
+  const switchLeague = (l) => {
+    setLeague(l); setGames(null); setResult(null); setError('')
+    setNflGame(''); setSource(''); setNflJob(null)
+  }
 
   const find = async () => {
     setFinding(true); setError(''); setGames(null)
-    try { setGames(await findSchedule(site, Number(season))) }
-    catch (e) { setError(e.message) } finally { setFinding(false) }
+    try {
+      setGames(isNfl ? await findNflGames(Number(season), team)
+                     : await findSchedule(site, Number(season)))
+    } catch (e) { setError(e.message) } finally { setFinding(false) }
   }
   const run = async (dry) => {
     setBusy(true); setResult(null); setError('')
@@ -690,43 +705,98 @@ function DataGrab({ films, filmId, onChanged, flash, nav }) {
       setResult(r); if (!dry) { onChanged(); flash(`Imported ${r.imported} plays`) }
     } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
+  // The NFL import is a job: the first game of a season downloads the season file.
+  const runNfl = async () => {
+    setBusy(true); setResult(null); setError(''); setNflJob(null)
+    try {
+      const started = await importNflPbp({ film_id: Number(film), game_id: nflGame })
+      setNflJob(started)
+      clearInterval(poll.current)
+      poll.current = setInterval(async () => {
+        try {
+          const u = await getJob(started.id)
+          setNflJob(u)
+          if (u.status !== 'running') {
+            clearInterval(poll.current); setBusy(false)
+            if (u.status === 'done') { onChanged(); flash(u.message) }
+          }
+        } catch { clearInterval(poll.current); setBusy(false) }
+      }, 2000)
+    } catch (e) { setError(e.message); setBusy(false) }
+  }
   return (
     <div className="screen">
       <div className="scr-bar"><span className="back" onClick={() => nav('home')}>‹ Home</span>
-        <h2>Data Grab <span className="count">· college play-by-play</span></h2></div>
+        <h2>Data Grab <span className="count">· {isNfl ? 'NFL' : 'college'} play-by-play</span></h2></div>
       <div className="steps">
-        <Step n="1" h="Find your game" hint="Enter a college's athletics website and season, then pick the game — no link to hunt down.">
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <input className="inp" style={{ flex: 2, minWidth: 200 }} value={site} onChange={(e) => setSite(e.target.value)}
-              placeholder="school website, e.g. minesathletics.com" onKeyDown={(e) => e.key === 'Enter' && site && find()} />
-            <input className="inp" style={{ width: 90 }} value={season} onChange={(e) => setSeason(e.target.value)} placeholder="season" />
-            <button className="btn" disabled={finding || !site} onClick={find}>{finding ? 'Finding…' : 'Find games'}</button>
+        <Step n="1" h="Find your game" hint="Pick the league, then find the game — no link to hunt down.">
+          <div className="presets" style={{ marginBottom: 10 }}>
+            <span className={'chip' + (league === 'college' ? ' on' : '')} onClick={() => switchLeague('college')}>College</span>
+            <span className={'chip' + (isNfl ? ' on' : '')} onClick={() => switchLeague('nfl')}>NFL</span>
           </div>
-          <div className="hint2">Works for most <b>college</b> programs (their sites run on the Sidearm platform). Not high-school or pro sites — for those, paste the box-score link below if you have one.</div>
+
+          {!isNfl ? (
+            <>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <input className="inp" style={{ flex: 2, minWidth: 200 }} value={site} onChange={(e) => setSite(e.target.value)}
+                  placeholder="school website, e.g. minesathletics.com" onKeyDown={(e) => e.key === 'Enter' && site && find()} />
+                <input className="inp" style={{ width: 90 }} value={season} onChange={(e) => setSeason(e.target.value)} placeholder="season" />
+                <button className="btn" disabled={finding || !site} onClick={find}>{finding ? 'Finding…' : 'Find games'}</button>
+              </div>
+              <div className="hint2">Works for most <b>college</b> programs (their sites run on the Sidearm platform). Not high-school sites — for those, paste the box-score link below if you have one.</div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <input className="inp" style={{ flex: 1, minWidth: 140 }} value={team} onChange={(e) => setTeam(e.target.value.toUpperCase())}
+                  placeholder="team, e.g. KC (blank = every game)" onKeyDown={(e) => e.key === 'Enter' && find()} />
+                <input className="inp" style={{ width: 90 }} value={season} onChange={(e) => setSeason(e.target.value)} placeholder="season" />
+                <button className="btn" disabled={finding} onClick={find}>{finding ? 'Finding…' : 'Find games'}</button>
+              </div>
+              <div className="hint2">Every NFL game since 1999, from the public <b>nflverse</b> data set. Use the team's abbreviation (KC, PHI, SF). Each NFL play carries its own game clock, so these line up on broadcast film more tightly than college does.</div>
+            </>
+          )}
+
           {games && games.length > 0 && (
             <div className="presets" style={{ marginTop: 12 }}>
-              {games.map((g) => (
+              {games.map((g) => (isNfl ? (
+                <span key={g.game_id} className={'chip' + (nflGame === g.game_id ? ' on' : '')} onClick={() => setNflGame(g.game_id)}>
+                  {g.label}
+                </span>
+              ) : (
                 <span key={g.box_id} className={'chip' + (source === g.url ? ' on' : '')} onClick={() => setSource(g.url)}>
                   vs {g.opponent}
                 </span>
-              ))}
+              )))}
             </div>
           )}
-          {games && games.length === 0 && <div className="hint2">No games found — check the spelling and season. This school's site may not be a supported (Sidearm) one; if so, paste a box-score link below.</div>}
-          <label className="fld">or paste a box-score link</label>
-          <input className="inp" style={{ width: '100%' }} value={source} onChange={(e) => setSource(e.target.value)}
-            placeholder="https://…athletics.com/…/boxscore/24148" />
+          {games && games.length === 0 && <div className="hint2">No games found — check the season{isNfl ? ' and the team abbreviation.' : '. This school’s site may not be a supported (Sidearm) one; if so, paste a box-score link below.'}</div>}
+          {!isNfl && <>
+            <label className="fld">or paste a box-score link</label>
+            <input className="inp" style={{ width: '100%' }} value={source} onChange={(e) => setSource(e.target.value)}
+              placeholder="https://…athletics.com/…/boxscore/24148" />
+          </>}
         </Step>
         <Step n="2" h="Attach it to a film" hint="The plays line up on this film's timeline once imported.">
           <select className="inp" value={film} onChange={(e) => setFilm(e.target.value)}>
             <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
           </select>
         </Step>
-        <Step n="3" h="Preview, then import" hint="Preview shows the counts without changing anything.">
+        <Step n="3" h="Preview, then import" hint={isNfl
+          ? 'The first game of a season downloads it (about 18 MB, once) — later games are instant.'
+          : 'Preview shows the counts without changing anything.'}>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn" disabled={busy || !film || !source} onClick={() => run(true)}>Preview</button>
-            <button className="btn primary" disabled={busy || !film || !source} onClick={() => run(false)}>Import play-by-play</button>
+            {!isNfl && <button className="btn" disabled={busy || !film || !source} onClick={() => run(true)}>Preview</button>}
+            <button className="btn primary" disabled={busy || !film || !picked}
+              onClick={() => (isNfl ? runNfl() : run(false))}>
+              {busy ? 'Working…' : 'Import play-by-play'}
+            </button>
           </div>
+          {nflJob && <div className={'job' + (nflJob.status === 'failed' ? ' bad' : '')}>
+            {nflJob.message}
+            {nflJob.status === 'running' && nflJob.phase === 'downloading' &&
+              <div className="hint2">Large one-time download — leave this open.</div>}
+          </div>}
         </Step>
       </div>
       {error && <div className="error" style={{ maxWidth: 720 }}>{error}</div>}
@@ -746,7 +816,12 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
   const [film, setFilm] = useState(filmId || '')
   const [film2, setFilm2] = useState(filmId || '')
   const [film3, setFilm3] = useState(filmId || '')
+  const [film4, setFilm4] = useState(filmId || '')
   const [sens, setSens] = useState('0.4')
+  const [skip, setSkip] = useState('0')
+  const [noSpecial, setNoSpecial] = useState(false)
+  const [match, setMatch] = useState(null)
+  const [matching, setMatching] = useState(false)
   const [job, setJob] = useState(null)      // clock job
   const [job2, setJob2] = useState(null)    // scene job
   const [jobV, setJobV] = useState(null)    // verify job
@@ -778,6 +853,22 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
       else if (r.kind === 'align') { setJob(r); watch(r.id, setJob) }
     }).catch(() => {})
   }, [])
+  // Matching is a plain request (no scanning) — preview first, then apply.
+  const runMatch = async (dry) => {
+    setMatching(true); setError('')
+    if (dry) setMatch(null)
+    try {
+      const r = await matchPlays({
+        film_id: Number(film4), offset: Number(skip) || 0,
+        skip_special: noSpecial, dry_run: dry,
+      })
+      setMatch(r)
+      if (!dry) { onChanged(); flash(`Matched ${r.applied} plays`) }
+    } catch (e) { setError(e.message); setMatch(null) } finally { setMatching(false) }
+  }
+  // Re-preview whenever the knobs change, so the buttons never apply a stale pairing.
+  useEffect(() => { setMatch(null) }, [film4, skip, noSpecial])
+
   const running = [job, job2, jobV].some((j) => j && j.status === 'running')
   return (
     <div className="screen">
@@ -816,6 +907,44 @@ function AutoDetect({ films, filmId, onChanged, flash, nav }) {
         {job2 && <div className={'job' + (job2.status === 'failed' ? ' bad' : '')}>
           {job2.message}
           {job2.status === 'running' && <div>{job2.processed}s of film scanned…</div>}
+        </div>}
+      </div>
+
+      <div className="form-card">
+        <h4 style={{ margin: '0 0 6px' }}>All-22 — give the detected plays their play data</h4>
+        <p className="hint3">Scene detect finds <i>where</i> each play is; the play-by-play knows <i>what</i> each play was. Both are in game order, so this pairs them up — the 1st cut is the 1st play, and so on. Import the play-by-play in Data Grab first, then run this.</p>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select className="inp" style={{ flex: 1, minWidth: 160 }} value={film4} disabled={running || matching} onChange={(e) => setFilm4(e.target.value)}>
+            <option value="">select film…</option>{films.map((f) => <option key={f.id} value={f.id}>{f.label || f.path}</option>)}
+          </select>
+          <label style={{ fontSize: 12, color: 'var(--dim)' }}>skip first
+            <input className="inp" type="number" style={{ marginLeft: 6, width: 64 }} value={skip}
+              disabled={running || matching} onChange={(e) => setSkip(e.target.value)} />
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={noSpecial} disabled={running || matching}
+              onChange={(e) => setNoSpecial(e.target.checked)} />
+            no kicks/punts
+          </label>
+          <button className="btn" disabled={!film4 || running || matching} onClick={() => runMatch(true)}>Preview</button>
+          <button className="btn primary" disabled={!film4 || running || matching || !match} onClick={() => runMatch(false)}>Match them up</button>
+        </div>
+        {match && <div className={'job' + (match.clean ? '' : ' bad')}>
+          <b>{match.summary}</b>
+          {!match.clean && <div className="hint2">The counts differ, so everything after the first missing play is shifted. If the preview is off by a constant, raise <b>skip first</b>; if the film omits kicks and punts, tick the box.</div>}
+          {match.preview && match.preview.length > 0 && (
+            <table className="mini"><tbody>
+              {match.preview.map((p, i) => (
+                <tr key={i}>
+                  <td>{Math.floor(p.t_start / 60)}:{String(Math.floor(p.t_start % 60)).padStart(2, '0')}</td>
+                  <td>play {p.play_no}</td>
+                  <td>{p.down ? `${p.down} & ${p.distance ?? '-'}` : '—'}</td>
+                  <td>{p.play_type || '—'}</td>
+                  <td>{p.result || ''}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          )}
         </div>}
       </div>
 

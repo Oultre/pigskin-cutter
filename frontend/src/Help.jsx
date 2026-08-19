@@ -23,7 +23,7 @@ export default function Help() {
         <ul>
           <li><b>Clip Cutter</b> — find plays and make clips. This is where you&rsquo;ll spend most of your time.</li>
           <li><b>Auto Detect</b> — let the app find the plays for you on a broadcast game.</li>
-          <li><b>Data Grab</b> — pull the official play-by-play for a college game.</li>
+          <li><b>Data Grab</b> — pull the official play-by-play for an NFL or college game.</li>
           <li><b>Build Reel</b> — string a bunch of plays into one highlight video.</li>
           <li><b>Film Library</b> — add a game and see what&rsquo;s loaded.</li>
         </ul>
@@ -72,7 +72,7 @@ export default function Help() {
 
       <section>
         <h2>Auto Detect — let the app find the plays</h2>
-        <p>Auto Detect has three boxes, and which one you use depends on your film.</p>
+        <p>Auto Detect has four boxes, and which you use depends on your film.</p>
         <ol>
           <li><b>Broadcast — read the game clock.</b> For a <b>TV broadcast</b> game, this reads the
             on-screen game clock and lines your play-by-play up with the video — no tagging. It needs the
@@ -81,6 +81,12 @@ export default function Help() {
           <li><b>All-22 &amp; coaches film — detect scene cuts.</b> On All-22 and end-zone film every play is
             its own camera cut, so no game clock is needed — this splits the film at those cuts into plays.
             If it misses cuts, set <b>sensitivity</b> to high; if it finds too many, set it to low.</li>
+          <li><b>All-22 — give the detected plays their play data.</b> Scene detect finds <i>where</i>
+            each play is but not <i>what</i> it was. If you&rsquo;ve imported the play-by-play for that game
+            (Data Grab), this pairs them in game order — 1st cut to 1st play — so your All-22 cuts get
+            real down, distance and result. Hit <b>Preview</b> first: it tells you whether the two sides
+            line up. If your film skips kicks and punts, tick <b>no kicks/punts</b>; if it opens on a
+            title card the detector counted as a play, raise <b>skip first</b>.</li>
           <li><b>Check the alignment against the video.</b> Auto-align only places plays <i>approximately</i>.
             This reads each placed play&rsquo;s down &amp; distance back off the video and compares it to the
             play-by-play, marking every play <b>Verified</b>, <b>Review</b>, or <b>Unchecked</b>.</li>
@@ -92,12 +98,21 @@ export default function Help() {
       <section>
         <h2>Data Grab — official play-by-play</h2>
         <p><b>Data Grab</b> pulls the official play list for a game so you don&rsquo;t have to chart it.
-          Type a college&rsquo;s athletics website (like <i>minesathletics.com</i>) and the season, click
-          <b> Find games</b>, and pick your game from the list — it fills in every play&rsquo;s down,
-          distance, and result. (No link to hunt down.)</p>
-        <p className="tip">This works for most <b>college</b> teams — their athletics sites all run on
-          the same platform (Sidearm). It does <b>not</b> work for high-school or pro sites. If your
-          school isn&rsquo;t found, you can still paste a box-score link directly.</p>
+          Pick <b>College</b> or <b>NFL</b> at the top, find your game, and it fills in every play&rsquo;s
+          down, distance, and result.</p>
+        <ul>
+          <li><b>College</b> — type the school&rsquo;s athletics website (like <i>minesathletics.com</i>)
+            and the season, click <b>Find games</b>, and pick your game. Works for most college
+            programs, because their sites run on the same platform (Sidearm). Not high-school sites —
+            for those you can still paste a box-score link directly.</li>
+          <li><b>NFL</b> — type a team abbreviation (<i>KC</i>, <i>PHI</i>, <i>SF</i>) and the season,
+            then pick the game. Every NFL game back to 1999 is available. The first game you import
+            from a season downloads that season (about 18 MB) — after that it&rsquo;s instant, and works
+            with no internet.</li>
+        </ul>
+        <p className="tip">NFL play-by-play carries a game clock on <b>every play</b>, where the college
+          feed only marks the start of each drive. So on NFL broadcast film, Auto Detect places plays
+          noticeably more precisely.</p>
         <p>The plays come in without cut times — run <b>Auto Detect</b> to line them up on the video.</p>
       </section>
 

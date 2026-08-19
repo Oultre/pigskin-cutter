@@ -245,3 +245,65 @@ def test_presets_export_import(client):
 def test_stream_missing_film_is_404(client):
     r = client.get("/api/film/1/stream")
     assert r.status_code == 404   # g.mp4 doesn't exist on disk
+
+
+# -- All-22: matching detected segments to play-by-play --------------------
+
+
+def _library_all22(tmp_path):
+    """A film with three scene-detected segments and three play-by-play plays."""
+    lib = Library.init(tmp_path / "lib22")
+    conn = lib.conn
+    conn.execute("INSERT INTO films (id, path, label, source_type) VALUES (1,'a22.mp4','A22','all22')")
+    for i, ts in enumerate((10.0, 45.0, 80.0)):
+        conn.execute("INSERT INTO plays (id, film_id, play_no, t_start, t_end, source, confidence)"
+                     " VALUES (?,1,?,?,?, 'detected', 0.5)", (100 + i, 900 + i, ts, ts + 6))
+    for i, (dn, pt) in enumerate((("1", "run"), ("2", "pass"), ("3", "pass"))):
+        db.insert_play(conn, 1, i + 1, None, None, "pbp", 1.0, {"down": dn, "play_type": pt})
+    conn.commit()
+    root = lib.root
+    lib.close()
+    return root
+
+
+@pytest.fixture
+def client22(tmp_path):
+    return TestClient(create_app(_library_all22(tmp_path)))
+
+
+def test_match_plays_preview_writes_nothing(client22):
+    r = client22.post("/api/match-plays", json={"film_id": 1, "dry_run": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["dry_run"] is True and body["matched"] == 3 and body["clean"] is True
+    assert [p["play_no"] for p in body["preview"]] == [1, 2, 3]
+    assert body["preview"][0]["t_start"] == 10.0
+
+    # nothing was applied: the detected rows are still there, untimed pbp rows too
+    plays = client22.get("/api/plays").json()["plays"]
+    assert sum(1 for p in plays if p["source"] == "detected") == 3
+
+
+def test_match_plays_applies_times_to_the_play_data(client22):
+    r = client22.post("/api/match-plays", json={"film_id": 1, "dry_run": False})
+    assert r.status_code == 200 and r.json()["applied"] == 3
+
+    plays = client22.get("/api/plays").json()["plays"]
+    assert all(p["source"] == "pbp" for p in plays)        # segments consumed
+    assert sorted(p["t_start"] for p in plays) == [10.0, 45.0, 80.0]
+
+
+def test_match_plays_offset_shifts_the_pairing(client22):
+    body = client22.post("/api/match-plays",
+                         json={"film_id": 1, "offset": 1, "dry_run": True}).json()
+    assert body["matched"] == 2
+    assert body["preview"][0]["t_start"] == 45.0          # first segment skipped
+    assert body["preview"][0]["play_no"] == 1
+    assert body["clean"] is False                          # and it says so
+
+
+def test_match_plays_needs_both_sides(client):
+    """The plain fixture has no detected segments — the error must say what to do."""
+    r = client.post("/api/match-plays", json={"film_id": 1, "dry_run": True})
+    assert r.status_code == 400
+    assert "Detect plays" in r.json()["error"]
